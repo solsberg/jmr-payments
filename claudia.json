@@ -1,0 +1,11 @@
+{
+  "lambda": {
+    "role": "jmr-payments-executor",
+    "name": "jmr-payments",
+    "region": "us-east-1"
+  },
+  "api": {
+    "id": "jm43540w46",
+    "module": "app"
+  }
+}

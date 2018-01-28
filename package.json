@@ -1,0 +1,16 @@
+{
+  "name": "jmr-payments",
+  "version": "1.0.0",
+  "description": "AWS API implemented with Lambda for custom server(less) functionality for jmr-register application",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "solsberg",
+  "license": "ISC",
+  "dependencies": {
+    "claudia-api-builder": "^3.0.1",
+    "firebase-admin": "^5.8.1",
+    "stripe": "^5.4.0"
+  }
+}
