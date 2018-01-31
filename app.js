@@ -2,18 +2,23 @@ const ApiBuilder = require('claudia-api-builder'),
       stripeApi = require('stripe'),
       firebaseAdmin = require('firebase-admin');
 
-
-
 const api = new ApiBuilder();
 module.exports = api;
+let initializedVersion;
+
+const generalServerErrorMessage = "There was a problem with the payment processor. " +
+  "Please contact registration@menschwork.org for help.";
 
 api.post("/charge", (request) => {
   const stripe = stripeApi(request.env.stripe_secret_api_key);
-  const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
-  firebaseAdmin.initializeApp({
-    credential: firebaseAdmin.credential.cert(firebaseServiceAccount),
-    databaseURL: 'https://jmr-register.firebaseio.com'
-  });
+  if (!initializedVersion || initializedVersion != request.env.lambdaVersion) {
+    const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
+    firebaseAdmin.initializeApp({
+      credential: firebaseAdmin.credential.cert(firebaseServiceAccount),
+      databaseURL: 'https://jmr-register.firebaseio.com'
+    });
+    initializedVersion = request.env.lambdaVersion;
+  }
   const db = firebaseAdmin.database();
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
 
@@ -33,7 +38,7 @@ api.post("/charge", (request) => {
     return new Promise((resolve, reject) => {
       if (decodedToken.uid != request.body.userid) {
         console.log("userid in request does not match id token");
-        reject("userid in request does not match id token");
+        reject(generalServerErrorMessage);
         return;
       }
       console.log("sending charge request to stripe");
@@ -45,7 +50,11 @@ api.post("/charge", (request) => {
       }, function(err, charge) {
         if (err) {
           console.log("received error from stripe", err);
-          reject(err);
+          if (err.type === 'StripeCardError') {
+            reject("There was a problem charging your card: " + err.message);
+          } else {
+            reject(generalServerErrorMessage);
+          }
         } else {
           console.log("successful charge request to stripe");
           resolve(charge);
@@ -58,7 +67,7 @@ api.post("/charge", (request) => {
       eventRegRef.child('transactions').push({charge}, err => {
         if (err) {
           console.log("received error from firebase", err);
-          reject(err);
+          reject(generalServerErrorMessage);
         } else {
           console.log("successful write request to firebase");
           resolve();
@@ -71,7 +80,7 @@ api.post("/charge", (request) => {
       eventRegRef.update({madeEarlyDeposit: true}, err => {
         if (err) {
           console.log("received error from firebase", err);
-          reject(err);
+          reject(generalServerErrorMessage);
         } else {
           console.log("successful update request to firebase");
           resolve();
@@ -79,9 +88,9 @@ api.post("/charge", (request) => {
       });
     });
   }).then(() => {
-    return "ok";
+    return "OK";
   }).catch(err => {
     console.log(err);
-    return "not ok";
+    throw err;
   });
 });
