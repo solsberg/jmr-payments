@@ -16,7 +16,7 @@ api.post("/charge", (request) => {
     const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
     firebaseAdmin.initializeApp({
       credential: firebaseAdmin.credential.cert(firebaseServiceAccount),
-      databaseURL: 'https://jmr-register.firebaseio.com'
+      databaseURL: request.env.firebase_database_url
     });
     initializedVersion = request.env.lambdaVersion;
   }
