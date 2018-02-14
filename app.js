@@ -22,15 +22,19 @@ api.post("/charge", (request) => {
   }
   const db = firebaseAdmin.database();
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+  let existingRegistration = false;
 
   //TODO validate inputs
 
   return authenticateRequest(request)
   .then(() => validateRegistrationState(eventRegRef))
-  .then(() => createCharge(stripe, request))
+  .then((existing) => {
+    existingRegistration = existing;
+    return createCharge(stripe, request);
+  })
   .then((charge) => Promise.all([
     saveChargeData(eventRegRef, charge),
-    updateRegistration(eventRegRef, {madeEarlyDeposit: true})
+    updateRegistration(eventRegRef, {madeEarlyDeposit: true}, !existingRegistration)
   ]))
   .then(() => "OK")
   .catch(err => {
@@ -73,7 +77,7 @@ function validateRegistrationState(eventRegRef, request) {
         console.log("early deposit payment already recorded for this registration");
         reject(createUserError(generalServerErrorMessage));
       } else {
-        resolve();
+        resolve(snapshot.val() && !!snapshot.val().created_at);
       }
     });
   });
@@ -118,8 +122,11 @@ function saveChargeData(eventRegRef, charge) {
   });
 }
 
-function updateRegistration(eventRegRef, values) {
+function updateRegistration(eventRegRef, values, isNew) {
   console.log("updating registration in firebase");
+  if (isNew) {
+    values = Object.assign({}, values, {created_at: firebaseAdmin.database.ServerValue.TIMESTAMP});
+  }
   return new Promise((resolve, reject) => {
     eventRegRef.update(values, err => {
       if (err) {
