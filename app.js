@@ -34,7 +34,7 @@ api.post("/charge", (request) => {
   })
   .then((charge) => Promise.all([
     saveChargeData(eventRegRef, charge),
-    updateRegistration(eventRegRef, {madeEarlyDeposit: true}, !existingRegistration)
+    recordEarlyDeposit(eventRegRef, charge, !existingRegistration)
   ]))
   .then(() => "OK")
   .catch(err => {
@@ -126,6 +126,29 @@ function updateRegistration(eventRegRef, values, isNew) {
   console.log("updating registration in firebase");
   if (isNew) {
     values = Object.assign({}, values, {created_at: firebaseAdmin.database.ServerValue.TIMESTAMP});
+  }
+  return new Promise((resolve, reject) => {
+    eventRegRef.update(values, err => {
+      if (err) {
+        console.log("received error from firebase", err);
+        reject(createUserError(generalServerErrorMessage));
+      } else {
+        console.log("successful update request to firebase");
+        resolve();
+      }
+    });
+  });
+}
+
+function recordEarlyDeposit(eventRegRef, charge, isNewRegistration) {
+  console.log("updating registration for early deposit in firebase");
+  values = {
+    ['earlyDeposit/status']: 'paid',
+    ['earlyDeposit/charge']: charge.id,
+    ['earlyDeposit/updated_at']: firebaseAdmin.database.ServerValue.TIMESTAMP
+  }
+  if (isNewRegistration) {
+    values.created_at = firebaseAdmin.database.ServerValue.TIMESTAMP;
   }
   return new Promise((resolve, reject) => {
     eventRegRef.update(values, err => {
