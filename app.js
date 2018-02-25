@@ -1,6 +1,7 @@
 const ApiBuilder = require('claudia-api-builder'),
       stripeApi = require('stripe'),
-      firebaseAdmin = require('firebase-admin');
+      firebaseAdmin = require('firebase-admin'),
+      requestApi = require('request');
 
 const api = new ApiBuilder();
 module.exports = api;
@@ -12,14 +13,8 @@ const generalServerErrorMessage = "There was a problem with the payment processo
 api.post("/charge", (request) => {
   console.log("POST /charge: ", request.body);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
-  if (!initializedVersion || initializedVersion != request.env.lambdaVersion) {
-    const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
-    firebaseAdmin.initializeApp({
-      credential: firebaseAdmin.credential.cert(firebaseServiceAccount),
-      databaseURL: request.env.firebase_database_url
-    });
-    initializedVersion = request.env.lambdaVersion;
-  }
+  initFirebase(request);
+
   const db = firebaseAdmin.database();
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
   let existingRegistration = false;
@@ -45,6 +40,58 @@ api.post("/charge", (request) => {
     throw err;
   });
 });
+
+api.post("/adminEmail", (request) => {
+  console.log("POST /adminEmail: ", request.body);
+
+  const DEFAULT_FROM_ADDRESS = 'noreply@menschwork.org';
+  const DEFAULT_TO_ADDRESS = 'registration@menschwork.org';
+  const DEFAULT_SUBJECT = 'Menschwork Registration';
+
+  //TODO validate inputs
+
+  let formData = {
+    from: request.body.from || DEFAULT_FROM_ADDRESS,
+    to: request.body.to || DEFAULT_TO_ADDRESS,
+    subject: request.body.subject || DEFAULT_SUBJECT,
+    text: request.body.text
+  };
+
+  if (request.env.lambdaVersion !== 'prod') {
+    formData.subject = '[TEST] ' + formData.subject;
+    formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
+  }
+
+  return new Promise((resolve, reject) => {
+    requestApi.post({
+      url: request.env.mailgun_base_url + '/messages',
+      formData: formData,
+      auth: {
+        user: 'api',
+        pass: request.env.mailgun_api_key
+      }
+    }, function optionalCallback(err, httpResponse, body) {
+      if (err) {
+        console.log("Error received from mailgun", err);
+        reject(err);
+      } else {
+        console.log('Email sent successfully');
+        resolve();
+      }
+    });
+  });
+});
+
+function initFirebase(request) {
+  if (!initializedVersion || initializedVersion != request.env.lambdaVersion) {
+    const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
+    firebaseAdmin.initializeApp({
+      credential: firebaseAdmin.credential.cert(firebaseServiceAccount),
+      databaseURL: request.env.firebase_database_url
+    });
+    initializedVersion = request.env.lambdaVersion;
+  }
+}
 
 function createUserError(userMessage, expected) {
   return {

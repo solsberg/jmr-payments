@@ -11,6 +11,7 @@
   "dependencies": {
     "claudia-api-builder": "^3.0.1",
     "firebase-admin": "^5.8.1",
+    "request": "^2.83.0",
     "stripe": "^5.4.0"
   }
 }
