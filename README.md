@@ -10,6 +10,8 @@ This project uses [Claudia.js](https://claudiajs.com) to deploy to AWS API Gatew
 lambdaVersion - stage name  
 stripe_secret_api_key  
 firebase_database_url  
+mailgun_api_key
+mailgun_base_url
 
 ##### Firebase private key config
 Download from

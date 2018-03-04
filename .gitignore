@@ -2,3 +2,4 @@
 /node_modules
 config/firebaseAccountConfig-dev.json
 config/firebaseAccountConfig-prod.json
+data/imported-profiles.json

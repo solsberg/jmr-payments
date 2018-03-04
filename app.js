@@ -21,7 +21,7 @@ api.post("/charge", (request) => {
 
   //TODO validate inputs
 
-  return authenticateRequest(request)
+  return authenticateRequest(request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(eventRegRef))
   .then((existing) => {
     existingRegistration = existing;
@@ -82,6 +82,26 @@ api.post("/adminEmail", (request) => {
   });
 });
 
+api.get("/importedProfile", (request) => {
+  console.log("GET /importedEmail: ", request.body);
+  initFirebase(request);
+
+  const email = request.queryString.email.toLowerCase();
+  if (!email) {
+    throw "missing query string parameter: email";
+  }
+
+  return authenticateRequest(request.queryString.idToken)
+  .then((uid) => firebaseAdmin.auth().getUser(uid))
+  .then((user) => {
+    const importedProfiles = require('data/imported-profiles.json');
+    if (user.email.toLowerCase() !== email) {
+      throw "email in request is not authenticated";
+    }
+    return importedProfiles[email] || {};
+  });
+});
+
 function initFirebase(request) {
   if (!initializedVersion || initializedVersion != request.env.lambdaVersion) {
     const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
@@ -100,16 +120,16 @@ function createUserError(userMessage, expected) {
   };
 }
 
-function authenticateRequest(request) {
+function authenticateRequest(idToken, uid) {
   console.log("verifying id token with firebase");
-  return firebaseAdmin.auth().verifyIdToken(request.body.idToken)
+  return firebaseAdmin.auth().verifyIdToken(idToken)
   .then(decodedToken => {
     return new Promise((resolve, reject) => {
-      if (decodedToken.uid != request.body.userid) {
+      if (!!uid && decodedToken.uid !== uid) {
         console.log("userid in request does not match id token");
         reject(createUserError(generalServerErrorMessage));
       } else {
-        resolve();
+        resolve(decodedToken.uid);
       }
     });
   });
