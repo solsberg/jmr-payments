@@ -10,6 +10,20 @@ let initializedVersion;
 const generalServerErrorMessage = "There was a problem with the payment processor. " +
   "Please contact registration@menschwork.org for help.";
 
+//CORS
+api.corsOrigin((request) => {
+  if (request.env.lambdaVersion === 'prod') {
+    return 'https://register.menschwork.org';
+  } else {
+		return '*';
+  }
+});
+
+api.corsMaxAge(300); // in seconds
+
+
+//endpoints
+
 api.post("/charge", (request) => {
   console.log("POST /charge: ", request.body);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
