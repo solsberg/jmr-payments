@@ -5,7 +5,7 @@ const ApiBuilder = require('claudia-api-builder'),
 
 const api = new ApiBuilder();
 module.exports = api;
-let initializedVersion;
+let firebaseAppCache = {};
 
 const generalServerErrorMessage = "There was a problem with the payment processor. " +
   "Please contact registration@menschwork.org for help.";
@@ -27,15 +27,15 @@ api.corsMaxAge(300); // in seconds
 api.post("/charge", (request) => {
   console.log("POST /charge: ", request.body);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
-  initFirebase(request);
+  const firebase = initFirebase(request);
 
-  const db = firebaseAdmin.database();
+  const db = firebase.database();
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
   let existingRegistration = false;
 
   //TODO validate inputs
 
-  return authenticateRequest(request.body.idToken, request.body.userid)
+  return authenticateRequest(firebase, request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(eventRegRef))
   .then((existing) => {
     existingRegistration = existing;
@@ -98,15 +98,15 @@ api.post("/adminEmail", (request) => {
 
 api.get("/importedProfile", (request) => {
   console.log("GET /importedEmail: ", request.body);
-  initFirebase(request);
+  const firebase = initFirebase(request);
 
   const email = request.queryString.email.toLowerCase();
   if (!email) {
     throw "missing query string parameter: email";
   }
 
-  return authenticateRequest(request.queryString.idToken)
-  .then((uid) => firebaseAdmin.auth().getUser(uid))
+  return authenticateRequest(firebase, request.queryString.idToken)
+  .then((uid) => firebase.auth().getUser(uid))
   .then((user) => {
     const importedProfiles = require('data/imported-profiles.json');
     if (user.email.toLowerCase() !== email) {
@@ -117,14 +117,17 @@ api.get("/importedProfile", (request) => {
 });
 
 function initFirebase(request) {
-  if (!initializedVersion || initializedVersion != request.env.lambdaVersion) {
+  let app = firebaseAppCache[request.env.lambdaVersion];
+  if (!app)
+  {
     const firebaseServiceAccount = require(`config/firebaseAccountConfig-${request.env.lambdaVersion}.json`);
-    firebaseAdmin.initializeApp({
+    app = firebaseAdmin.initializeApp({
       credential: firebaseAdmin.credential.cert(firebaseServiceAccount),
       databaseURL: request.env.firebase_database_url
-    });
-    initializedVersion = request.env.lambdaVersion;
+    }, request.env.lambdaVersion);
+    firebaseAppCache[request.env.lambdaVersion] = app;
   }
+  return app;
 }
 
 function createUserError(userMessage, expected) {
@@ -134,9 +137,9 @@ function createUserError(userMessage, expected) {
   };
 }
 
-function authenticateRequest(idToken, uid) {
+function authenticateRequest(firebase, idToken, uid) {
   console.log("verifying id token with firebase");
-  return firebaseAdmin.auth().verifyIdToken(idToken)
+  return firebase.auth().verifyIdToken(idToken)
   .then(decodedToken => {
     return new Promise((resolve, reject) => {
       if (!!uid && decodedToken.uid !== uid) {
