@@ -1,7 +1,11 @@
 const ApiBuilder = require('claudia-api-builder'),
       stripeApi = require('stripe'),
       firebaseAdmin = require('firebase-admin'),
-      requestApi = require('request');
+      requestApi = require('request'),
+      AWS = require('aws-sdk'),
+      moment = require('moment');
+
+AWS.config.update({region: 'us-east-1'});
 
 const api = new ApiBuilder();
 module.exports = api;
@@ -20,7 +24,6 @@ api.corsOrigin((request) => {
 });
 
 api.corsMaxAge(300); // in seconds
-
 
 //endpoints
 
@@ -113,6 +116,57 @@ api.get("/importedProfile", (request) => {
       throw "email in request is not authenticated";
     }
     return importedProfiles[email] || {};
+  });
+});
+
+//sends a backup of firebase data to S3 once daily
+api.post("/init", (request) => {
+  console.log("POST /backup");
+
+  const BUCKET_NAME = 'jmr-payments-backup';
+  const firebase = initFirebase(request);
+
+  //calculate target key name for current date
+  let keyName = moment().format('YYYY-MM-DD');
+  if (request.env.lambdaVersion !== 'prod') {
+    keyName = "DEV-" + keyName;
+  }
+  const keyParams = {
+    Bucket: BUCKET_NAME,
+    Key: keyName
+  };
+
+  const s3 = new AWS.S3();
+
+  return new Promise((resolve, reject) => {
+    s3.headObject(keyParams, (err, data) => {
+      if (err) {
+        if (err.code === 'NotFound') {
+          //only create if key does not yet exist
+          const ref = firebase.database().ref();
+          console.log("fetching data");
+          ref.once('value')
+          .then((snapshot) => {
+            const data = snapshot.val();
+            const json = JSON.stringify(data);
+            console.log("storing data");
+            s3.putObject(Object.assign({}, keyParams, {Body: json}), (err) => {
+              if (err) {
+                console.log("storing data error", err);
+              } else {
+                console.log("storing data successful");
+              }
+              resolve();
+            });
+          });
+        } else {
+          console.log("headObject error", err);
+          resolve();
+        }
+      } else {
+        resolve();
+      }
+    });
   });
 });
 

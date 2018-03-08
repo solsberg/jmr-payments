@@ -9,8 +9,10 @@
   "author": "solsberg",
   "license": "ISC",
   "dependencies": {
+    "aws-sdk": "^2.206.0",
     "claudia-api-builder": "^3.0.1",
     "firebase-admin": "^5.8.1",
+    "moment": "^2.21.0",
     "request": "^2.83.0",
     "stripe": "^5.4.0"
   }
