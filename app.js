@@ -69,7 +69,7 @@ api.post("/adminEmail", (request) => {
 
   let formData = {
     from: request.body.from || DEFAULT_FROM_ADDRESS,
-    to: request.body.to || DEFAULT_TO_ADDRESS,
+    to: request.body.to || request.env.admin_to_address || DEFAULT_TO_ADDRESS,
     subject: request.body.subject || DEFAULT_SUBJECT,
     text: request.body.text
   };
