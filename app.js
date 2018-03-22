@@ -121,7 +121,7 @@ api.get("/importedProfile", (request) => {
 
 //sends a backup of firebase data to S3 once daily
 api.post("/init", (request) => {
-  console.log("POST /backup");
+  console.log("POST /init");
 
   const BUCKET_NAME = 'jmr-payments-backup';
   const firebase = initFirebase(request);
