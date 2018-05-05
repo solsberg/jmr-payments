@@ -33,22 +33,26 @@ api.post("/charge", (request) => {
   const firebase = initFirebase(request);
 
   const db = firebase.database();
+  const eventRef = db.ref(`events/${request.body.eventid}`);
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
-  let existingRegistration = false;
+  let existingRegistration;
 
   //TODO validate inputs
 
+  const isEarlyDeposit = request.body.paymentType != 'REGISTRATION';
+
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then(() => validateRegistrationState(eventRegRef))
-  .then((existing) => {
-    existingRegistration = existing;
+  .then(() => validateRegistrationState(eventRef, eventRegRef, request))
+  .then((registration) => {
+    existingRegistration = registration;
     return createCharge(stripe, request);
   })
   .then((charge) => Promise.all([
     saveChargeData(eventRegRef, charge),
-    recordEarlyDeposit(eventRegRef, charge, !existingRegistration)
+    isEarlyDeposit ? recordEarlyDeposit(eventRegRef, charge, existingRegistration) :
+      recordRegistrationPayment(eventRegRef, charge, existingRegistration)
   ]))
-  .then(() => "OK")
+  .then(([_ignore, payment]) => payment)
   .catch(err => {
     console.log(err);
     if (err instanceof Object && !(err instanceof Error)) {
@@ -100,7 +104,7 @@ api.post("/adminEmail", (request) => {
 });
 
 api.get("/importedProfile", (request) => {
-  console.log("GET /importedEmail: ", request.body);
+  console.log("GET /importedProfile: ", request.queryString);
   const firebase = initFirebase(request);
 
   const email = request.queryString.email.toLowerCase();
@@ -206,17 +210,44 @@ function authenticateRequest(firebase, idToken, uid) {
   });
 }
 
-function validateRegistrationState(eventRegRef, request) {
+function fetchRef(ref) {
+  return new Promise((resolve, reject) => {
+    ref.once('value').then(snapshot => {
+      resolve(snapshot.val());
+    })
+    .catch(err => {
+      reject(err);
+    });
+  });
+}
+
+function validateRegistrationState(eventRef, eventRegRef, request) {
   console.log("validating registration state is valid for charge request");
-  return eventRegRef.once('value')
-  .then((snapshot) => {
+  return Promise.all([fetchRef(eventRef), fetchRef(eventRegRef)])
+  .then(([eventInfo, registration]) => {
+    console.log("validateRegistrationState: eventInfo", eventInfo);
+    console.log("validateRegistrationState: registration", registration);
+    console.log("validateRegistrationState: request", request);
+    registration = registration || {};
     return new Promise((resolve, reject) => {
-      if (snapshot.val() && snapshot.val().madeEarlyDeposit) {
-        console.log("early deposit payment already recorded for this registration");
-        reject(createUserError(generalServerErrorMessage));
+      if (request.body.paymentType === 'REGISTRATION') {
+        const balance = calculateBalance(eventInfo, registration);
+        if (getAmountInCents(request) > balance) {
+          console.log("charge amount exceeds registration account balance");
+          reject(createUserError(generalServerErrorMessage));
+        }
+        //TODO - validate minimum payment? (unless paid all balance)
       } else {
-        resolve(snapshot.val() && !!snapshot.val().created_at);
+        if (!!registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
+          console.log("early deposit payment already recorded for this registration");
+          reject(createUserError(generalServerErrorMessage));
+        }
+        if (getAmountInCents(request) !== 3600) {
+          console.log("invalid early deposit payment amount: " + getAmountInCents(request));
+          reject(createUserError(generalServerErrorMessage));
+        }
       }
+      resolve(registration);
     });
   });
 }
@@ -225,7 +256,7 @@ function createCharge(stripe, request) {
   console.log("sending charge request to stripe");
   return new Promise((resolve, reject) => {
     stripe.charges.create({
-      amount: request.body.amount * 100,
+      amount: getAmountInCents(request),
       currency: "usd",
       source: request.body.token,
       description: request.body.description
@@ -278,14 +309,14 @@ function updateRegistration(eventRegRef, values, isNew) {
   });
 }
 
-function recordEarlyDeposit(eventRegRef, charge, isNewRegistration) {
+function recordEarlyDeposit(eventRegRef, charge, registration) {
   console.log("updating registration for early deposit in firebase");
-  values = {
+  let values = {
     ['earlyDeposit/status']: 'paid',
     ['earlyDeposit/charge']: charge.id,
     ['earlyDeposit/updated_at']: firebaseAdmin.database.ServerValue.TIMESTAMP
   }
-  if (isNewRegistration) {
+  if (!registration.created_at) {
     values.created_at = firebaseAdmin.database.ServerValue.TIMESTAMP;
   }
   return new Promise((resolve, reject) => {
@@ -295,8 +326,87 @@ function recordEarlyDeposit(eventRegRef, charge, isNewRegistration) {
         reject(createUserError(generalServerErrorMessage));
       } else {
         console.log("successful update request to firebase");
-        resolve();
+        resolve(values);
       }
     });
   });
+}
+
+function recordRegistrationPayment(eventRegRef, charge, registration) {
+  console.log("recording registration payment in firebase");
+  return Promise.all([
+    new Promise((resolve, reject) => {      //add payment object
+      let payment = {
+        ['status']: 'paid',
+        ['charge']: charge.id,
+        ['amount']: charge.amount,
+        ['created_at']: firebaseAdmin.database.ServerValue.TIMESTAMP
+      };
+      eventRegRef.child('account').child('payments').push(payment, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful write request to firebase");
+          resolve(payment);
+        }
+      });
+    }),
+    new Promise((resolve, reject) => {      //update order
+      let order = Object.assign({}, registration.order, registration.cart);
+      let values = {
+        order,
+        cart: null
+      };
+      if (!registration.created_at) {
+        values.created_at = firebaseAdmin.database.ServerValue.TIMESTAMP;
+      }
+      eventRegRef.update(values, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful update request to firebase");
+          //replace created_at with actual server time
+          let payment = Object.assign({}, values, {created_at: new Date().getTime()});
+          resolve(payment);
+        }
+      });
+    })
+  ]).then(([payment, _ignore]) => payment);
+}
+
+function getAmountInCents(request) {
+  let amountInCents = request.body.amountInCents;
+  if (!amountInCents && !!request.body.amount) {
+    amountInCents = request.body.amount * 100;
+  }
+  return amountInCents;
+}
+
+function calculateBalance(eventInfo, registration) {
+  let order = Object.assign({}, registration.order, registration.cart);
+
+  //main registration
+  let totalCharges = 0;
+  let totalCredits = 0;
+  totalCharges += eventInfo.priceList.roomChoice[order.roomChoice];
+
+  //early deposit credit
+  if (registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
+    totalCredits += 3600;
+  }
+
+  //previous payments
+  let account = registration.account;
+  if (!!account && !!account.payments) {
+    Object.keys(account.payments)
+      .map(k => account.payments[k])
+      .filter(p => p.status === 'paid')
+      .forEach(p => {
+        totalCredits += p.amount;
+      });
+  }
+
+  return totalCharges - totalCredits;
 }
