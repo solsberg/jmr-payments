@@ -235,8 +235,11 @@ function validateRegistrationState(eventRef, eventRegRef, request) {
         if (getAmountInCents(request) > balance) {
           console.log("charge amount exceeds registration account balance");
           reject(createUserError(generalServerErrorMessage));
+        } else if (getAmountInCents(request) < balance &&
+            getAmountInCents(request) < eventInfo.priceList.minimumPayment) {
+          console.log("charge amount below minimum payment amount");
+          reject(createUserError(generalServerErrorMessage));
         }
-        //TODO - validate minimum payment? (unless paid all balance)
       } else {
         if (!!registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
           console.log("early deposit payment already recorded for this registration");
