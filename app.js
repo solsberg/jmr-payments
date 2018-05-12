@@ -142,6 +142,10 @@ api.post("/init", (request) => {
 
   const s3 = new AWS.S3();
 
+  let serverInfo = {
+    timestamp: new Date().getTime()
+  };
+
   return new Promise((resolve, reject) => {
     s3.headObject(keyParams, (err, data) => {
       if (err) {
@@ -160,15 +164,15 @@ api.post("/init", (request) => {
               } else {
                 console.log("storing data successful");
               }
-              resolve();
+              resolve(serverInfo);
             });
           });
         } else {
           console.log("headObject error", err);
-          resolve();
+          resolve(serverInfo);
         }
       } else {
-        resolve();
+        resolve(serverInfo);
       }
     });
   });
@@ -294,24 +298,6 @@ function saveChargeData(eventRegRef, charge) {
   });
 }
 
-function updateRegistration(eventRegRef, values, isNew) {
-  console.log("updating registration in firebase");
-  if (isNew) {
-    values = Object.assign({}, values, {created_at: firebaseAdmin.database.ServerValue.TIMESTAMP});
-  }
-  return new Promise((resolve, reject) => {
-    eventRegRef.update(values, err => {
-      if (err) {
-        console.log("received error from firebase", err);
-        reject(createUserError(generalServerErrorMessage));
-      } else {
-        console.log("successful update request to firebase");
-        resolve();
-      }
-    });
-  });
-}
-
 function recordEarlyDeposit(eventRegRef, charge, registration) {
   console.log("updating registration for early deposit in firebase");
   let values = {
@@ -357,6 +343,9 @@ function recordRegistrationPayment(eventRegRef, charge, registration) {
     }),
     new Promise((resolve, reject) => {      //update order
       let order = Object.assign({}, registration.order, registration.cart);
+      if (!order.created_at) {
+        order.created_at = firebaseAdmin.database.ServerValue.TIMESTAMP;
+      }
       let values = {
         order,
         cart: null
@@ -387,6 +376,10 @@ function getAmountInCents(request) {
   return amountInCents;
 }
 
+function isEarlyDiscountAvailable(event, orderTime) {
+  return moment(orderTime).isSameOrBefore(event.earlyDiscount.endDate);
+}
+
 function calculateBalance(eventInfo, registration) {
   let order = Object.assign({}, registration.order, registration.cart);
 
@@ -394,6 +387,18 @@ function calculateBalance(eventInfo, registration) {
   let totalCharges = 0;
   let totalCredits = 0;
   totalCharges += eventInfo.priceList.roomChoice[order.roomChoice];
+  if (isEarlyDiscountAvailable(eventInfo, order.created_at)) {
+    totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.earlyDiscount.amount;
+  }
+  if (order.singleSupplement) {
+    totalCharges += eventInfo.priceList.singleRoom[order.roomChoice];
+  }
+  if (order.refrigerator) {
+    totalCharges += eventInfo.priceList.refrigerator;
+  }
+  if (order.thursdayNight) {
+    totalCharges += eventInfo.priceList.thursdayNight;
+  }
 
   //early deposit credit
   if (registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
