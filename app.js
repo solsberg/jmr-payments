@@ -236,7 +236,11 @@ function validateRegistrationState(eventRef, eventRegRef, request) {
     return new Promise((resolve, reject) => {
       if (request.body.paymentType === 'REGISTRATION') {
         const balance = calculateBalance(eventInfo, registration);
-        if (getAmountInCents(request) > balance) {
+        let order = Object.assign({}, registration.order, registration.cart);
+        if (!order.acceptedTerms) {
+          console.log("terms and conditions not accepted");
+          reject(createUserError(generalServerErrorMessage));
+        } else if (getAmountInCents(request) > balance) {
           console.log("charge amount exceeds registration account balance");
           reject(createUserError(generalServerErrorMessage));
         } else if (getAmountInCents(request) < balance &&
@@ -398,6 +402,9 @@ function calculateBalance(eventInfo, registration) {
   }
   if (order.thursdayNight) {
     totalCharges += eventInfo.priceList.thursdayNight;
+  }
+  if (order.donation) {
+    totalCharges += order.donation;
   }
 
   //early deposit credit
