@@ -1,0 +1,10 @@
+Dear %%first_name%%
+
+Thank you for completing your registration for %%event_title%%. We’re very happy that you’ll be joining us at the retreat.
+
+Please make sure to sign back in to the registration site at https://register.menschwork.org/ to pay your outstanding balance of %%balance%% by %%payment_date%%.
+
+We look forward to seeing you in Connecticut in October.
+
+In brotherhood,
+The %%event_title%% Planning Team

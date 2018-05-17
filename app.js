@@ -3,7 +3,8 @@ const ApiBuilder = require('claudia-api-builder'),
       firebaseAdmin = require('firebase-admin'),
       requestApi = require('request'),
       AWS = require('aws-sdk'),
-      moment = require('moment');
+      moment = require('moment'),
+      fs = require('fs');
 
 AWS.config.update({region: 'us-east-1'});
 
@@ -98,6 +99,53 @@ api.post("/adminEmail", (request) => {
       } else {
         console.log('Email sent successfully');
         resolve();
+      }
+    });
+  });
+});
+
+api.post("/templateEmail", (request) => {
+  console.log("POST /templateEmail: ", request.body);
+
+  const DEFAULT_FROM_ADDRESS = 'noreply@menschwork.org';
+  const DEFAULT_TO_ADDRESS = 'registration@menschwork.org';
+  const DEFAULT_SUBJECT = 'Menschwork Registration';
+
+  //TODO validate inputs
+
+  let formData = {
+    from: request.body.from || DEFAULT_FROM_ADDRESS,
+    to: request.body.to || request.env.admin_to_address || DEFAULT_TO_ADDRESS,
+    subject: request.body.subject || DEFAULT_SUBJECT
+  };
+
+  return new Promise((resolve, reject) => {
+    fs.readFile('templates/' + request.body.template + '.txt', 'utf8', function(err, contents) {
+      if (err) {
+        reject(err);
+      } else {
+        formData.text = request.body.substitutions
+          .reduce((acc, sub) => acc.replace(new RegExp(sub.pattern, 'g'), sub.value), contents);
+        if (request.env.lambdaVersion !== 'prod') {
+          formData.subject = '[TEST] ' + formData.subject;
+          formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
+        }
+        requestApi.post({
+          url: request.env.mailgun_base_url + '/messages',
+          formData: formData,
+          auth: {
+            user: 'api',
+            pass: request.env.mailgun_api_key
+          }
+        }, function optionalCallback(err, httpResponse, body) {
+          if (err) {
+            console.log("Error received from mailgun", err);
+            reject(err);
+          } else {
+            console.log('Email sent successfully');
+            resolve();
+          }
+        });
       }
     });
   });
