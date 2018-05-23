@@ -44,7 +44,7 @@ api.post("/charge", (request) => {
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(eventRef, eventRegRef, request))
-  .then((registration) => {
+  .then(({registration}) => {
     existingRegistration = registration;
     return createCharge(stripe, request);
   })
@@ -65,43 +65,7 @@ api.post("/charge", (request) => {
 
 api.post("/adminEmail", (request) => {
   console.log("POST /adminEmail: ", request.body);
-
-  const DEFAULT_FROM_ADDRESS = 'noreply@menschwork.org';
-  const DEFAULT_TO_ADDRESS = 'registration@menschwork.org';
-  const DEFAULT_SUBJECT = 'Menschwork Registration';
-
-  //TODO validate inputs
-
-  let formData = {
-    from: request.body.from || DEFAULT_FROM_ADDRESS,
-    to: request.body.to || request.env.admin_to_address || DEFAULT_TO_ADDRESS,
-    subject: request.body.subject || DEFAULT_SUBJECT,
-    text: request.body.text
-  };
-
-  if (request.env.lambdaVersion !== 'prod') {
-    formData.subject = '[TEST] ' + formData.subject;
-    formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
-  }
-
-  return new Promise((resolve, reject) => {
-    requestApi.post({
-      url: request.env.mailgun_base_url + '/messages',
-      formData: formData,
-      auth: {
-        user: 'api',
-        pass: request.env.mailgun_api_key
-      }
-    }, function optionalCallback(err, httpResponse, body) {
-      if (err) {
-        console.log("Error received from mailgun", err);
-        reject(err);
-      } else {
-        console.log('Email sent successfully');
-        resolve();
-      }
-    });
-  });
+  return sendAdminEmail(request.body, request.env);
 });
 
 api.post("/templateEmail", (request) => {
@@ -226,6 +190,47 @@ api.post("/init", (request) => {
   });
 });
 
+api.post("/updateOrder", (request) => {
+  console.log("POST /updateOrder: ", request.body);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRef = db.ref(`events/${request.body.eventid}`);
+  const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+
+  let initialBalance;
+  let currentEventInfo;
+  let currentRegistration;
+
+  return authenticateRequest(firebase, request.body.idToken, request.body.userid)
+  .then(() => validateRegistrationState(eventRef, eventRegRef, request))
+  .then(({registration, eventInfo}) => {
+    initialBalance = calculateBalance(eventInfo, registration);
+    currentEventInfo = eventInfo;
+    currentRegistration = registration;
+    return updateOrder(eventRegRef, registration, request.body.values);
+  })
+  .then((order) => {
+    let updatedRegistration = Object.assign({}, currentRegistration, {order: order});
+    if (initialBalance >= 0 && calculateBalance(currentEventInfo, updatedRegistration) < 0) {
+      return sendAdminEmail({
+        subject: "JMR refund due",
+        text: "A refund is now due on the account of user " + request.body.userid
+      }, request.env);
+    } else {
+      return Promise.resolve();
+    }
+  })
+  .then(() => "OK")
+  .catch(err => {
+    console.log(err);
+    if (err instanceof Object && !(err instanceof Error)) {
+      return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
+    }
+    throw err;
+  });
+});
+
 function initFirebase(request) {
   let app = firebaseAppCache[request.env.lambdaVersion];
   if (!app)
@@ -282,7 +287,16 @@ function validateRegistrationState(eventRef, eventRegRef, request) {
     console.log("validateRegistrationState: request", request);
     registration = registration || {};
     return new Promise((resolve, reject) => {
-      if (request.body.paymentType === 'REGISTRATION') {
+      if (!request.body.paymentType) {
+        //updateOrder request
+        if (!registration.order) {
+          console.log("no existing order found");
+          reject(createUserError(generalServerErrorMessage));
+        } else if (!registration.account || !registration.account.payments) {
+          console.log("no previous payment found");
+          reject(createUserError(generalServerErrorMessage));
+        }
+      } else if (request.body.paymentType === 'REGISTRATION') {
         const balance = calculateBalance(eventInfo, registration);
         let order = Object.assign({}, registration.order, registration.cart);
         if (!order.acceptedTerms) {
@@ -306,7 +320,7 @@ function validateRegistrationState(eventRef, eventRegRef, request) {
           reject(createUserError(generalServerErrorMessage));
         }
       }
-      resolve(registration);
+      resolve({registration, eventInfo});
     });
   });
 }
@@ -420,6 +434,17 @@ function recordRegistrationPayment(eventRegRef, charge, registration) {
   ]).then(([payment, _ignore]) => payment);
 }
 
+function updateOrder(eventRegRef, registration, values) {
+  console.log("updating order in firebase");
+  let order = Object.assign({}, registration.order, values);
+  return eventRegRef.child("order").set(order)
+  .then(() => order)
+  .catch(err => {
+    console.log("received error from firebase", err);
+    throw createUserError(generalServerErrorMessage);
+  });
+}
+
 function getAmountInCents(request) {
   let amountInCents = request.body.amountInCents;
   if (!amountInCents && !!request.body.amount) {
@@ -472,4 +497,41 @@ function calculateBalance(eventInfo, registration) {
   }
 
   return totalCharges - totalCredits;
+}
+
+function sendAdminEmail(values, env) {
+  const DEFAULT_FROM_ADDRESS = 'noreply@menschwork.org';
+  const DEFAULT_TO_ADDRESS = 'registration@menschwork.org';
+  const DEFAULT_SUBJECT = 'Menschwork Registration';
+
+  let formData = {
+    from: values.from || DEFAULT_FROM_ADDRESS,
+    to: values.to || env.admin_to_address || DEFAULT_TO_ADDRESS,
+    subject: values.subject || DEFAULT_SUBJECT,
+    text: values.text
+  };
+
+  if (env.lambdaVersion !== 'prod') {
+    formData.subject = '[TEST] ' + formData.subject;
+    formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
+  }
+
+  return new Promise((resolve, reject) => {
+    requestApi.post({
+      url: env.mailgun_base_url + '/messages',
+      formData: formData,
+      auth: {
+        user: 'api',
+        pass: env.mailgun_api_key
+      }
+    }, function optionalCallback(err, httpResponse, body) {
+      if (err) {
+        console.log("Error received from mailgun", err);
+        reject(err);
+      } else {
+        console.log('Email sent successfully');
+        resolve();
+      }
+    });
+  });
 }

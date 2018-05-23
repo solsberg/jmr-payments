@@ -4,6 +4,7 @@ Thank you for completing your registration for %%event_title%%. We’re very hap
 
 Please make sure to sign back in to the registration site at https://register.menschwork.org/ to pay your outstanding balance of %%balance%% by %%payment_date%%.
 
+Please send us an email at jmr27@menschwork.org if you have any questions.
 We look forward to seeing you in Connecticut in October.
 
 In brotherhood,
