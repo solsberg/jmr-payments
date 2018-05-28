@@ -84,33 +84,56 @@ api.post("/templateEmail", (request) => {
   };
 
   return new Promise((resolve, reject) => {
-    fs.readFile('templates/' + request.body.template + '.txt', 'utf8', function(err, contents) {
-      if (err) {
-        reject(err);
-      } else {
-        formData.text = request.body.substitutions
-          .reduce((acc, sub) => acc.replace(new RegExp(sub.pattern, 'g'), sub.value), contents);
-        if (request.env.lambdaVersion !== 'prod') {
-          formData.subject = '[TEST] ' + formData.subject;
-          formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
-        }
-        requestApi.post({
-          url: request.env.mailgun_base_url + '/messages',
-          formData: formData,
-          auth: {
-            user: 'api',
-            pass: request.env.mailgun_api_key
-          }
-        }, function optionalCallback(err, httpResponse, body) {
+    Promise.all([
+      new Promise((resolve, reject) => {
+        fs.readFile('templates/' + request.body.template + '.txt', 'utf8', function(err, contents) {
           if (err) {
-            console.log("Error received from mailgun", err);
             reject(err);
           } else {
-            console.log('Email sent successfully');
-            resolve();
+            resolve(contents);
           }
         });
+      }),
+      new Promise((resolve, reject) => {
+        fs.readFile('templates/' + request.body.template + '.html', 'utf8', function(err, contents) {
+          if (err) {
+            resolve();  //ignore errors
+          } else {
+            resolve(contents);
+          }
+        });
+      })
+    ])
+    .then(([textContent, htmlContent]) => {
+      formData.text = request.body.substitutions
+        .reduce((acc, sub) => acc.replace(new RegExp(sub.pattern, 'g'), sub.value), textContent);
+      if (!!htmlContent) {
+        formData.html = request.body.substitutions
+          .reduce((acc, sub) => acc.replace(new RegExp(sub.pattern, 'g'), sub.value), htmlContent);
       }
+      if (request.env.lambdaVersion !== 'prod') {
+        formData.subject = '[TEST] ' + formData.subject;
+        formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
+      }
+      requestApi.post({
+        url: request.env.mailgun_base_url + '/messages',
+        formData: formData,
+        auth: {
+          user: 'api',
+          pass: request.env.mailgun_api_key
+        }
+      }, function optionalCallback(err, httpResponse, body) {
+        if (err) {
+          console.log("Error received from mailgun", err);
+          reject(err);
+        } else {
+          console.log('Email sent successfully');
+          resolve();
+        }
+      });
+    })
+    .catch(err => {
+      reject(err);
     });
   });
 });
