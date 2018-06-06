@@ -4,7 +4,8 @@ const ApiBuilder = require('claudia-api-builder'),
       requestApi = require('request'),
       AWS = require('aws-sdk'),
       moment = require('moment'),
-      fs = require('fs');
+      fs = require('fs'),
+      get = require('lodash/get');
 
 AWS.config.update({region: 'us-east-1'});
 
@@ -251,6 +252,70 @@ api.post("/updateOrder", (request) => {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
     throw err;
+  });
+});
+
+api.get('/bambam', (request) => {
+  console.log("GET /bambam: ", request.queryString);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRegRef = db.ref(`event-registrations/${request.queryString.eventid}`);
+  const usersRef = db.ref('users');
+
+  return authenticateRequest(firebase, request.queryString.idToken, request.queryString.userid)
+  .then(() => Promise.all([
+    fetchRef(eventRegRef),
+    fetchRef(usersRef)
+  ]))
+  .then(([registrations, users]) => {
+    //find my registration
+    let myRegistration = registrations[request.queryString.userid];
+    //find my user
+    let myUser = users[request.queryString.userid];
+    if (!myUser) {
+      throw "missing user record";
+    }
+
+    let usersArray = firebaseArrayElements(users);
+
+    //invitees
+    const invitees = firebaseArrayElements(get(myRegistration, 'order.bambam_invites', {}))
+      .map(i => i.email)
+      .map(email => usersArray.find(user => user.email.toLowerCase() === email.toLowerCase()))
+      .filter(user => !!user)
+      .map(user => {
+        let registration = registrations[user.uid];
+        return {
+          email: user.email,
+          registered: !!registration && !!registration.order && !!registration.order.roomChoice
+        };
+      });
+
+    //inviter
+    let inviterUid = Object.keys(registrations)
+      .find(uid => {
+        //is my email on invitee list
+        const registration = registrations[uid];
+        const invitees = firebaseArrayElements(get(registration, 'order.bambam_invites', {}));
+        return !!invitees.find(i => i.email.toLowerCase() === myUser.email.toLowerCase());
+      });
+    let inviter;
+    if (!!inviterUid) {
+      let inviterUser = users[inviterUid];
+      if (!!inviterUser) {
+        inviter = {
+          email: inviterUser.email,
+          first_name: inviterUser.profile.first_name,
+          last_name: inviterUser.profile.last_name
+        };
+      }
+    }
+
+    return {
+      invitees: invitees.length > 0 ? invitees : undefined,
+      inviter
+    };
   });
 });
 
@@ -557,4 +622,13 @@ function sendAdminEmail(values, env) {
       }
     });
   });
+}
+
+function firebaseArrayElements(arrayObject) {
+  if (!!arrayObject) {
+    return Object.keys(arrayObject)
+      .map(k => arrayObject[k]);
+  } else {
+    return [];
+  }
 }
