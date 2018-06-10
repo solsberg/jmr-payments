@@ -563,6 +563,23 @@ function isEarlyDiscountAvailable(event, orderTime) {
   return moment(orderTime).isSameOrBefore(event.earlyDiscount.endDate);
 }
 
+function isBambamDiscountAvailable(bambam, event, orderTime) {
+  if (!!bambam.inviter) {
+    if (moment(orderTime).isSameOrBefore(moment(bambam.inviter.invited_at)
+        .add(event.bambamDiscount.registerByAmount, event.bambamDiscount.registerByUnit)
+        .endOf('day'))) {
+      return true;
+    }
+  }
+  if (!!bambam.invitees && !!bambam.invitees.find(i =>
+      i.registered &&
+      moment(i.registered_at).isSameOrBefore(moment(i.invited_at)
+        .add(event.bambamDiscount.registerByAmount, event.bambamDiscount.registerByUnit)
+        .endOf('day')))) {
+    return true;
+  }
+}
+
 function calculateBalance(eventInfo, registration, bambam) {
   let order = Object.assign({}, registration.order, registration.cart);
 
@@ -573,7 +590,7 @@ function calculateBalance(eventInfo, registration, bambam) {
   if (isEarlyDiscountAvailable(eventInfo, order.created_at)) {
     totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.earlyDiscount.amount;
   }
-  if (!!bambam.inviter || (!!bambam.invitees && !!bambam.invitees.find(i => i.registered))) {
+  if (isBambamDiscountAvailable(bambam, eventInfo, order.created_at)) {
     totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.bambamDiscount.amount;
   }
   if (order.singleSupplement) {
@@ -675,33 +692,43 @@ function fetchBambamStatus(firebase, eventid, userid) {
 
     //invitees
     const invitees = firebaseArrayElements(get(myRegistration, 'bambam_invites', {}))
-      .map(i => i.email)
-      .map(email => usersArray.find(user => user.email.toLowerCase() === email.toLowerCase()))
-      .filter(user => !!user)
-      .map(user => {
-        let registration = registrations[user.uid];
+      .map(invite => ({
+        invite,
+        user: usersArray.find(user => user.email.toLowerCase() === invite.email.toLowerCase())
+      }))
+      .map(i => {
+        let registration = i.user && registrations[i.user.uid];
         return {
-          email: user.email,
-          registered: !!registration && !!registration.order && !!registration.order.roomChoice
+          email: i.invite.email,
+          invited_at: i.invite.invited_at,
+          registered: has(registration, "order.roomChoice"),
+          registered_at: get(registration, "order.created_at")
         };
       });
 
     //inviter
-    let inviterUid = Object.keys(registrations)
-      .find(uid => {
-        //is my email on invitee list
+    let invites = Object.keys(registrations)
+      .reduce((acc, uid) => {
         const registration = registrations[uid];
         const invitees = firebaseArrayElements(get(registration, 'bambam_invites', {}));
-        return !!invitees.find(i => i.email.toLowerCase() === myUser.email.toLowerCase());
-      });
+        const foundInvite = invitees.find(i => i.email.toLowerCase() === myUser.email.toLowerCase());
+        if (!!foundInvite) {
+          return acc.concat([{
+            uid,
+            invite: foundInvite
+          }]);
+        }
+        return acc;
+      }, []);
     let inviter;
-    if (!!inviterUid) {
-      let inviterUser = users[inviterUid];
+    if (invites.length > 0) {
+      let inviterUser = users[invites[0].uid];
       if (!!inviterUser) {
         inviter = {
           email: inviterUser.email,
           first_name: inviterUser.profile.first_name,
-          last_name: inviterUser.profile.last_name
+          last_name: inviterUser.profile.last_name,
+          invited_at: invites[0].invite.invited_at
         };
       }
     }
