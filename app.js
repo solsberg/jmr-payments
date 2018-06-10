@@ -5,7 +5,8 @@ const ApiBuilder = require('claudia-api-builder'),
       AWS = require('aws-sdk'),
       moment = require('moment'),
       fs = require('fs'),
-      get = require('lodash/get');
+      get = require('lodash/get'),
+      has = require('lodash/has');
 
 AWS.config.update({region: 'us-east-1'});
 
@@ -44,7 +45,7 @@ api.post("/charge", (request) => {
   const isEarlyDeposit = request.body.paymentType != 'REGISTRATION';
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then(() => validateRegistrationState(eventRef, eventRegRef, request))
+  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, request))
   .then(({registration}) => {
     existingRegistration = registration;
     return createCharge(stripe, request);
@@ -225,18 +226,20 @@ api.post("/updateOrder", (request) => {
   let initialBalance;
   let currentEventInfo;
   let currentRegistration;
+  let currentBambam;
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then(() => validateRegistrationState(eventRef, eventRegRef, request))
-  .then(({registration, eventInfo}) => {
-    initialBalance = calculateBalance(eventInfo, registration);
+  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, request))
+  .then(({registration, eventInfo, bambam}) => {
+    initialBalance = calculateBalance(eventInfo, registration, bambam);
     currentEventInfo = eventInfo;
     currentRegistration = registration;
+    currentBambam = bambam;
     return updateOrder(eventRegRef, registration, request.body.values);
   })
   .then((order) => {
     let updatedRegistration = Object.assign({}, currentRegistration, {order: order});
-    if (initialBalance >= 0 && calculateBalance(currentEventInfo, updatedRegistration) < 0) {
+    if (initialBalance >= 0 && calculateBalance(currentEventInfo, updatedRegistration, currentBambam) < 0) {
       return sendAdminEmail({
         subject: "JMR refund due",
         text: "A refund is now due on the account of user " + request.body.userid
@@ -259,63 +262,74 @@ api.get('/bambam', (request) => {
   console.log("GET /bambam: ", request.queryString);
   const firebase = initFirebase(request);
 
-  const db = firebase.database();
-  const eventRegRef = db.ref(`event-registrations/${request.queryString.eventid}`);
-  const usersRef = db.ref('users');
-
   return authenticateRequest(firebase, request.queryString.idToken, request.queryString.userid)
-  .then(() => Promise.all([
+  .then(() => fetchBambamStatus(firebase, request.queryString.eventid, request.queryString.userid));
+});
+
+api.post('/bambam', (request) => {
+  console.log("POST /bambam: ", request.body);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRegRef = db.ref(`event-registrations/${request.body.eventid}`);
+  const invitesReg = eventRegRef.child(request.body.userid).child('bambam_invites');
+  const usersRef = db.ref(`users`);
+
+  let responseMessages = [];
+
+  return authenticateRequest(firebase, request.body.idToken, request.body.userid)
+  .then((uid) => Promise.all([
     fetchRef(eventRegRef),
     fetchRef(usersRef)
-  ]))
-  .then(([registrations, users]) => {
-    //find my registration
-    let myRegistration = registrations[request.queryString.userid];
-    //find my user
-    let myUser = users[request.queryString.userid];
-    if (!myUser) {
-      throw "missing user record";
-    }
+  ])).then(([registrations, users]) => {
+    const importedProfiles = require('data/imported-profiles.json');
+    const allInviteeEmails = firebaseArrayElements(registrations)
+      .reduce((acc, reg) => acc.concat(firebaseArrayElements(reg.bambam_invites || {})), [])
+      .map(i => i.email.toLowerCase());
+    const alreadyInvited = new Set(allInviteeEmails);
+    const alreadyInvitedByMe = new Set(firebaseArrayElements(registrations[request.body.userid].bambam_invites)
+      .map(i => i.email.toLowerCase()));
+    const alreadyProcessed = new Set();
+    const alreadyRegistered = new Set(Object.keys(registrations)
+      .filter(uid => has(registrations[uid], "order.roomChoice") || has(registrations[uid], "earlyDeposit"))
+      .map(uid => get(users[uid], "email")));
 
-    let usersArray = firebaseArrayElements(users);
+    let pushPromises = [];
 
-    //invitees
-    const invitees = firebaseArrayElements(get(myRegistration, 'order.bambam_invites', {}))
-      .map(i => i.email)
-      .map(email => usersArray.find(user => user.email.toLowerCase() === email.toLowerCase()))
-      .filter(user => !!user)
-      .map(user => {
-        let registration = registrations[user.uid];
-        return {
-          email: user.email,
-          registered: !!registration && !!registration.order && !!registration.order.roomChoice
-        };
-      });
-
-    //inviter
-    let inviterUid = Object.keys(registrations)
-      .find(uid => {
-        //is my email on invitee list
-        const registration = registrations[uid];
-        const invitees = firebaseArrayElements(get(registration, 'order.bambam_invites', {}));
-        return !!invitees.find(i => i.email.toLowerCase() === myUser.email.toLowerCase());
-      });
-    let inviter;
-    if (!!inviterUid) {
-      let inviterUser = users[inviterUid];
-      if (!!inviterUser) {
-        inviter = {
-          email: inviterUser.email,
-          first_name: inviterUser.profile.first_name,
-          last_name: inviterUser.profile.last_name
-        };
+    request.body.emails
+    .map(email => email.toLowerCase())
+    .forEach(email => {
+      //if already invited
+      if (alreadyProcessed.has(email)) {
+        return;
+      } else if (alreadyInvitedByMe.has(email)) {
+        responseMessages.push('You have already invited ' + email);
+      } else if (alreadyInvited.has(email)) {
+        responseMessages.push(email + ' has already been invited by someone else');
+      } else if (importedProfiles.hasOwnProperty(email)) {
+        responseMessages.push(email + ' has already been to a JMR');
+      } else if (alreadyRegistered.has(email)) {
+        responseMessages.push(email + ' has already registered');
+      } else {
+        //push to current reg list
+        pushPromises.push(invitesReg.push({
+          email,
+          invited_at: new Date().getTime()
+        }));
+        //send email
+        //add to already invited list
+        alreadyProcessed.add(email);
       }
+    });
+    return Promise.all(pushPromises);
+  }).then(() => {
+    return responseMessages.length > 0 ? responseMessages : undefined;
+  }).catch(err => {
+    console.log(err);
+    if (err instanceof Object && !(err instanceof Error)) {
+      return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
-
-    return {
-      invitees: invitees.length > 0 ? invitees : undefined,
-      inviter
-    };
+    throw err;
   });
 });
 
@@ -366,10 +380,13 @@ function fetchRef(ref) {
   });
 }
 
-function validateRegistrationState(eventRef, eventRegRef, request) {
+function validateRegistrationState(firebase, eventRef, eventRegRef, request) {
   console.log("validating registration state is valid for charge request");
-  return Promise.all([fetchRef(eventRef), fetchRef(eventRegRef)])
-  .then(([eventInfo, registration]) => {
+  return Promise.all([
+    fetchRef(eventRef),
+    fetchRef(eventRegRef),
+    fetchBambamStatus(firebase, eventRef.key, eventRegRef.key)
+  ]).then(([eventInfo, registration, bambam]) => {
     console.log("validateRegistrationState: eventInfo", eventInfo);
     console.log("validateRegistrationState: registration", registration);
     console.log("validateRegistrationState: request", request);
@@ -385,7 +402,8 @@ function validateRegistrationState(eventRef, eventRegRef, request) {
           reject(createUserError(generalServerErrorMessage));
         }
       } else if (request.body.paymentType === 'REGISTRATION') {
-        const balance = calculateBalance(eventInfo, registration);
+        const balance = calculateBalance(eventInfo, registration, bambam);
+        console.log("balance", balance);
         let order = Object.assign({}, registration.order, registration.cart);
         if (!order.acceptedTerms) {
           console.log("terms and conditions not accepted");
@@ -408,7 +426,7 @@ function validateRegistrationState(eventRef, eventRegRef, request) {
           reject(createUserError(generalServerErrorMessage));
         }
       }
-      resolve({registration, eventInfo});
+      resolve({registration, eventInfo, bambam});
     });
   });
 }
@@ -545,7 +563,7 @@ function isEarlyDiscountAvailable(event, orderTime) {
   return moment(orderTime).isSameOrBefore(event.earlyDiscount.endDate);
 }
 
-function calculateBalance(eventInfo, registration) {
+function calculateBalance(eventInfo, registration, bambam) {
   let order = Object.assign({}, registration.order, registration.cart);
 
   //main registration
@@ -554,6 +572,9 @@ function calculateBalance(eventInfo, registration) {
   totalCharges += eventInfo.priceList.roomChoice[order.roomChoice];
   if (isEarlyDiscountAvailable(eventInfo, order.created_at)) {
     totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.earlyDiscount.amount;
+  }
+  if (!!bambam.inviter || (!!bambam.invitees && !!bambam.invitees.find(i => i.registered))) {
+    totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.bambamDiscount.amount;
   }
   if (order.singleSupplement) {
     totalCharges += eventInfo.priceList.singleRoom[order.roomChoice];
@@ -631,4 +652,63 @@ function firebaseArrayElements(arrayObject) {
   } else {
     return [];
   }
+}
+
+function fetchBambamStatus(firebase, eventid, userid) {
+  const db = firebase.database();
+  const eventRegRef = db.ref(`event-registrations/${eventid}`);
+  const usersRef = db.ref('users');
+
+  return Promise.all([
+    fetchRef(eventRegRef),
+    fetchRef(usersRef)
+  ]).then(([registrations, users]) => {
+    //find my registration
+    let myRegistration = registrations[userid];
+    //find my user
+    let myUser = users[userid];
+    if (!myUser) {
+      throw "missing user record";
+    }
+
+    let usersArray = firebaseArrayElements(users);
+
+    //invitees
+    const invitees = firebaseArrayElements(get(myRegistration, 'bambam_invites', {}))
+      .map(i => i.email)
+      .map(email => usersArray.find(user => user.email.toLowerCase() === email.toLowerCase()))
+      .filter(user => !!user)
+      .map(user => {
+        let registration = registrations[user.uid];
+        return {
+          email: user.email,
+          registered: !!registration && !!registration.order && !!registration.order.roomChoice
+        };
+      });
+
+    //inviter
+    let inviterUid = Object.keys(registrations)
+      .find(uid => {
+        //is my email on invitee list
+        const registration = registrations[uid];
+        const invitees = firebaseArrayElements(get(registration, 'bambam_invites', {}));
+        return !!invitees.find(i => i.email.toLowerCase() === myUser.email.toLowerCase());
+      });
+    let inviter;
+    if (!!inviterUid) {
+      let inviterUser = users[inviterUid];
+      if (!!inviterUser) {
+        inviter = {
+          email: inviterUser.email,
+          first_name: inviterUser.profile.first_name,
+          last_name: inviterUser.profile.last_name
+        };
+      }
+    }
+
+    return {
+      invitees: invitees.length > 0 ? invitees : undefined,
+      inviter
+    };
+  });
 }
