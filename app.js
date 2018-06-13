@@ -73,6 +73,10 @@ api.post("/adminEmail", (request) => {
 api.post("/templateEmail", (request) => {
   console.log("POST /templateEmail: ", request.body);
 
+  return sendTemplateEmail(request.body.template, request.body, request.env);
+});
+
+function sendTemplateEmail(template, params, env) {
   const DEFAULT_FROM_ADDRESS = 'noreply@menschwork.org';
   const DEFAULT_TO_ADDRESS = 'registration@menschwork.org';
   const DEFAULT_SUBJECT = 'Menschwork Registration';
@@ -80,15 +84,15 @@ api.post("/templateEmail", (request) => {
   //TODO validate inputs
 
   let formData = {
-    from: request.body.from || DEFAULT_FROM_ADDRESS,
-    to: request.body.to || request.env.admin_to_address || DEFAULT_TO_ADDRESS,
-    subject: request.body.subject || DEFAULT_SUBJECT
+    from: params.from || DEFAULT_FROM_ADDRESS,
+    to: params.to || env.admin_to_address || DEFAULT_TO_ADDRESS,
+    subject: params.subject || DEFAULT_SUBJECT
   };
 
   return new Promise((resolve, reject) => {
     Promise.all([
       new Promise((resolve, reject) => {
-        fs.readFile('templates/' + request.body.template + '.txt', 'utf8', function(err, contents) {
+        fs.readFile('templates/' + template + '.txt', 'utf8', function(err, contents) {
           if (err) {
             reject(err);
           } else {
@@ -97,7 +101,7 @@ api.post("/templateEmail", (request) => {
         });
       }),
       new Promise((resolve, reject) => {
-        fs.readFile('templates/' + request.body.template + '.html', 'utf8', function(err, contents) {
+        fs.readFile('templates/' + template + '.html', 'utf8', function(err, contents) {
           if (err) {
             resolve();  //ignore errors
           } else {
@@ -107,22 +111,23 @@ api.post("/templateEmail", (request) => {
       })
     ])
     .then(([textContent, htmlContent]) => {
-      formData.text = request.body.substitutions
+      let substitutions = params.substitutions || [];
+      formData.text = substitutions
         .reduce((acc, sub) => acc.replace(new RegExp(sub.pattern, 'g'), sub.value), textContent);
       if (!!htmlContent) {
-        formData.html = request.body.substitutions
+        formData.html = substitutions
           .reduce((acc, sub) => acc.replace(new RegExp(sub.pattern, 'g'), sub.value), htmlContent);
       }
-      if (request.env.lambdaVersion !== 'prod') {
+      if (env.lambdaVersion !== 'prod') {
         formData.subject = '[TEST] ' + formData.subject;
         formData.text = '*** THIS IS SENT FROM THE TEST ENVIRONMENT ***\n\n' + formData.text;
       }
       requestApi.post({
-        url: request.env.mailgun_base_url + '/messages',
+        url: env.mailgun_base_url + '/messages',
         formData: formData,
         auth: {
           user: 'api',
-          pass: request.env.mailgun_api_key
+          pass: env.mailgun_api_key
         }
       }, function optionalCallback(err, httpResponse, body) {
         if (err) {
@@ -138,7 +143,7 @@ api.post("/templateEmail", (request) => {
       reject(err);
     });
   });
-});
+}
 
 api.get("/importedProfile", (request) => {
   console.log("GET /importedProfile: ", request.queryString);
@@ -274,14 +279,16 @@ api.post('/bambam', (request) => {
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}`);
   const invitesReg = eventRegRef.child(request.body.userid).child('bambam_invites');
   const usersRef = db.ref(`users`);
+  const eventRef = db.ref(`events/${request.body.eventid}`);
 
   let responseMessages = [];
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
   .then((uid) => Promise.all([
     fetchRef(eventRegRef),
-    fetchRef(usersRef)
-  ])).then(([registrations, users]) => {
+    fetchRef(usersRef),
+    fetchRef(eventRef)
+  ])).then(([registrations, users, eventInfo]) => {
     const importedProfiles = require('data/imported-profiles.json');
     const allInviteeEmails = firebaseArrayElements(registrations)
       .reduce((acc, reg) => acc.concat(firebaseArrayElements(reg.bambam_invites || {})), [])
@@ -293,8 +300,10 @@ api.post('/bambam', (request) => {
     const alreadyRegistered = new Set(Object.keys(registrations)
       .filter(uid => has(registrations[uid], "order.roomChoice") || has(registrations[uid], "earlyDeposit"))
       .map(uid => get(users[uid], "email")));
+    const thisUser = users[request.body.userid];
 
     let pushPromises = [];
+    let emailPromises = [];
 
     request.body.emails
     .map(email => email.toLowerCase())
@@ -316,12 +325,40 @@ api.post('/bambam', (request) => {
           email,
           invited_at: new Date().getTime()
         }));
+
         //send email
+        const inviter_fullname = `${thisUser.profile.first_name} ${thisUser.profile.last_name}`;
+        const last_discount_date = moment()
+          .add(eventInfo.bambamDiscount.registerByAmount, eventInfo.bambamDiscount.registerByUnit);
+        let discount_amount;
+        let discount_text_suffix = '';
+        const combined_discount_amount = Math.round((eventInfo.bambamDiscount.amount + eventInfo.earlyDiscount.amount) * 100);
+        const bambam_discount_amount = Math.round(eventInfo.bambamDiscount.amount * 100);
+        if (moment().isAfter(moment(eventInfo.earlyDiscount.endDate).endOf('day'))) {
+          discount_text = bambam_discount_amount;
+        } else {
+          discount_amount = combined_discount_amount;
+          if (last_discount_date.isAfter(moment(eventInfo.earlyDiscount.endDate).endOf('day'))) {
+            discount_text_suffix = ` (through ${moment(eventInfo.earlyDiscount.endDate).format('MMMM D')}, ` +
+              `${bambam_discount_amount}% after that)`;
+          }
+        }
+        emailPromises.push(sendTemplateEmail("bambam_invite", {
+          to: email,
+          subject: `Your friend, ${inviter_fullname}, invites you to the Jewish Men's Retreat`,
+          substitutions: [
+            {pattern: "%%inviter_name%%", value: inviter_fullname},
+            {pattern: "%%bambam_discount_last_date%%", value: last_discount_date.format('MMMM D')},
+            {pattern: "%%discount_amount%%", value: discount_amount},
+            {pattern: "%%discount_text_suffix%%", value: discount_text_suffix}
+          ]
+        }, request.env));
+
         //add to already invited list
         alreadyProcessed.add(email);
       }
     });
-    return Promise.all(pushPromises);
+    return Promise.all(pushPromises.concat(emailPromises));
   }).then(() => {
     return responseMessages.length > 0 ? responseMessages : undefined;
   }).catch(err => {
