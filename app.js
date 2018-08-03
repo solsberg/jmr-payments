@@ -331,7 +331,7 @@ api.post('/bambam', (request) => {
         const last_discount_date = moment()
           .add(eventInfo.bambamDiscount.registerByAmount, eventInfo.bambamDiscount.registerByUnit);
         let discount_amount;
-        let discount_text_suffix = '';
+        let discount_text_suffix;
         const combined_discount_amount = Math.round((eventInfo.bambamDiscount.amount + eventInfo.earlyDiscount.amount) * 100);
         const bambam_discount_amount = Math.round(eventInfo.bambamDiscount.amount * 100);
         if (moment().isAfter(moment(eventInfo.earlyDiscount.endDate).endOf('day'))) {
@@ -350,7 +350,7 @@ api.post('/bambam', (request) => {
             {pattern: "%%inviter_name%%", value: inviter_fullname},
             {pattern: "%%bambam_discount_last_date%%", value: last_discount_date.format('MMMM D')},
             {pattern: "%%discount_amount%%", value: discount_amount},
-            {pattern: "%%discount_text_suffix%%", value: discount_text_suffix}
+            {pattern: "%%discount_text_suffix%%", value: `${discount_amount}% discount${discount_text_suffix}`}
           ]
         }, request.env));
 
@@ -597,7 +597,7 @@ function getAmountInCents(request) {
 }
 
 function isEarlyDiscountAvailable(event, orderTime) {
-  return moment(orderTime).isSameOrBefore(event.earlyDiscount.endDate);
+  return moment(orderTime).isSameOrBefore(event.earlyDiscount.endDate, 'day');
 }
 
 function isBambamDiscountAvailable(bambam, event, orderTime) {
