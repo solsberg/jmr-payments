@@ -659,6 +659,15 @@ function calculateBalance(eventInfo, registration, bambam) {
       });
   }
 
+  //refunds
+  if (!!account && !!account.refunds) {
+    Object.keys(account.refunds)
+      .map(k => account.refunds[k])
+      .forEach(p => {
+        totalCredits += p.amount;
+      });
+  }
+
   return totalCharges - totalCredits;
 }
 
