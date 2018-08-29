@@ -664,6 +664,15 @@ function calculateBalance(eventInfo, registration, bambam) {
     Object.keys(account.refunds)
       .map(k => account.refunds[k])
       .forEach(p => {
+        totalCredits -= p.amount;
+      });
+  }
+
+  //credits
+  if (!!account && !!account.credits) {
+    Object.keys(account.credits)
+      .map(k => account.credits[k])
+      .forEach(p => {
         totalCredits += p.amount;
       });
   }
