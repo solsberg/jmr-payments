@@ -6,7 +6,8 @@ const ApiBuilder = require('claudia-api-builder'),
       moment = require('moment'),
       fs = require('fs'),
       get = require('lodash/get'),
-      has = require('lodash/has');
+      has = require('lodash/has'),
+      crypto = require('crypto');
 
 AWS.config.update({region: 'us-east-1'});
 
@@ -39,6 +40,7 @@ api.post("/charge", (request) => {
   const eventRef = db.ref(`events/${request.body.eventid}`);
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
   let existingRegistration;
+  let currentEventInfo;
 
   //TODO validate inputs
 
@@ -46,15 +48,25 @@ api.post("/charge", (request) => {
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, request))
-  .then(({registration}) => {
+  .then(({registration, eventInfo}) => {
     existingRegistration = registration;
+    currentEventInfo = eventInfo;
     return createCharge(stripe, request);
   })
-  .then((charge) => Promise.all([
-    saveChargeData(eventRegRef, charge),
-    isEarlyDeposit ? recordEarlyDeposit(eventRegRef, charge, existingRegistration) :
-      recordRegistrationPayment(eventRegRef, charge, existingRegistration)
-  ]))
+  .then((charge) => {
+    let promises = [
+      saveChargeData(eventRegRef, charge)
+    ];
+    if (isEarlyDeposit) {
+      promises.push(recordEarlyDeposit(eventRegRef, charge, existingRegistration));
+    } else {
+      promises.push(recordRegistrationPayment(eventRegRef, charge, existingRegistration));
+      if (!get(existingRegistration, "order.created_at")) {
+        promises.push(registerInMailchimp(firebase, request.body.userid, currentEventInfo, request.env));
+      }
+    }
+    return Promise.all(promises);
+  })
   .then(([_ignore, payment]) => payment)
   .catch(err => {
     console.log(err);
@@ -284,7 +296,7 @@ api.post('/bambam', (request) => {
   let responseMessages = [];
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then((uid) => Promise.all([
+  .then(() => Promise.all([
     fetchRef(eventRegRef),
     fetchRef(usersRef),
     fetchRef(eventRef)
@@ -792,5 +804,81 @@ function fetchBambamStatus(firebase, eventid, userid) {
       invitees: invitees.length > 0 ? invitees : undefined,
       inviter
     };
+  });
+}
+
+function registerInMailchimp(firebase, uid, eventInfo, env) {
+  const db = firebase.database();
+  const userRef = db.ref('users').child(uid);
+  let memberHash;
+
+  //fetch user
+  return fetchRef(userRef)
+  .then(user => {
+    //calc memberHash
+    memberHash = crypto.createHash('md5').update(user.email.toLowerCase()).digest("hex");
+
+    //try update member
+    return new Promise((resolve, reject) => {
+      requestApi.patch({
+        url: env.mailchimp_list_url + '/members/' + memberHash,
+        json: true,
+        body: {
+          interests: {
+            [eventInfo.mailchimpGroupId]: true
+          }
+        },
+        auth: {
+          user: 'api',
+          pass: env.mailchimp_api_key
+        }
+      }, function optionalCallback(err, httpResponse, body) {
+        console.log("mailchimp update", {err, httpResponse, body});
+        if ((err && response.statusCode == 404) ||
+            (!err && get(body, "status", 0) == 404)) {
+          resolve({status: 'notfound', user});
+        } else if (err) {
+          console.log("Error received from mailchimp update member call", err);
+        } else {
+          console.log('Mailchimp update member successful');
+        }
+        resolve();
+      });
+    });
+  })
+  .then(rslt => {
+    if (get(rslt, "status") === 'notfound') {
+      let {user} = rslt;
+      return new Promise((resolve, reject) => {
+        requestApi.post({
+          url: env.mailchimp_list_url + '/members',
+          json: true,
+          body: {
+            email_address: user.email,
+            email_type: 'html',
+            status: 'subscribed',
+            merge_fields: {
+              FNAME: user.profile.first_name,
+              LNAME: user.profile.last_name
+            },
+            interests: {
+              [eventInfo.mailchimpGroupId]: true
+            }
+          },
+          auth: {
+            user: 'api',
+            pass: env.mailchimp_api_key
+          }
+        }, function optionalCallback(err, httpResponse, body) {
+          console.log("mailchimp create", {err, httpResponse, body});
+          if (err) {
+            console.log("Error received from mailchimp create member call", err);
+          } else {
+            console.log('Mailchimp create member successful');
+          }
+          resolve();
+        });
+      });
+    }
   });
 }
