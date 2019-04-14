@@ -2,7 +2,7 @@ Dear %%first_name%%
 
 Thank you for completing your registration for %%event_title%%. We’re very happy that you’ll be joining us at the retreat.
 
-Please send us an email at jmr27@menschwork.org if you have any questions.
+Please send us an email at %%event_email%% if you have any questions.
 We look forward to seeing you in Connecticut in October.
 
 

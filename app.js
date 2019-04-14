@@ -342,27 +342,37 @@ api.post('/bambam', (request) => {
         const inviter_fullname = `${thisUser.profile.first_name} ${thisUser.profile.last_name}`;
         const last_discount_date = moment()
           .add(eventInfo.bambamDiscount.registerByAmount, eventInfo.bambamDiscount.registerByUnit);
-        let discount_amount;
+        let discount_amount = Math.round(eventInfo.bambamDiscount.amount * 100);
         let discount_text_suffix;
-        const combined_discount_amount = Math.round((eventInfo.bambamDiscount.amount + eventInfo.earlyDiscount.amount) * 100);
-        const bambam_discount_amount = Math.round(eventInfo.bambamDiscount.amount * 100);
-        if (moment().isAfter(moment(eventInfo.earlyDiscount.endDate).endOf('day'))) {
-          discount_text = bambam_discount_amount;
-        } else {
-          discount_amount = combined_discount_amount;
-          if (last_discount_date.isAfter(moment(eventInfo.earlyDiscount.endDate).endOf('day'))) {
-            discount_text_suffix = ` (through ${moment(eventInfo.earlyDiscount.endDate).format('MMMM D')}, ` +
-              `${bambam_discount_amount}% after that)`;
+        let earlyDiscount = getEarlyDiscount(eventInfo);
+        if (!!earlyDiscount) {
+          if (earlyDiscount.amount > 1) {
+            discount_text_suffix = `plus ${formatMoney(earlyDiscount.amount, 0)} early registration discount`;
+            if (last_discount_date.isAfter(moment(earlyDiscount.endDate).endOf('day'))) {
+              discount_text_suffix += ` through ${moment(earlyDiscount.endDate).format('MMMM D')}`;
+              if (earlyDiscount.extended) {
+                discount_text_suffix += `, ${formatMoney(earlyDiscount.extended.amount, 0)} after that`;
+              }
+            }
+            discount_text_suffix = ` (${discount_text_suffix})`;
+          } else {
+            discount_amount = Math.round((eventInfo.bambamDiscount.amount + eventInfo.earlyDiscount.amount) * 100);
+            if (last_discount_date.isAfter(moment(eventInfo.earlyDiscount.endDate).endOf('day'))) {
+              discount_text_suffix = ` (through ${moment(eventInfo.earlyDiscount.endDate).format('MMMM D')}, ` +
+                `${bambam_discount_amount}% after that)`;
+            }
           }
         }
         emailPromises.push(sendTemplateEmail("bambam_invite", {
           to: email,
           subject: `Your friend, ${inviter_fullname}, invites you to the Jewish Men's Retreat`,
           substitutions: [
+            {pattern: "%%event_title%%", value: event_info.title},
+            {pattern: "%%event_email%%", value: `${request.body.eventid}.menschwork.org`},
             {pattern: "%%inviter_name%%", value: inviter_fullname},
             {pattern: "%%bambam_discount_last_date%%", value: last_discount_date.format('MMMM D')},
             {pattern: "%%discount_amount%%", value: discount_amount},
-            {pattern: "%%discount_text_suffix%%", value: `${discount_amount}% discount${discount_text_suffix}`}
+            {pattern: "%%discount_text_suffix%%", value: discount_text_suffix}
           ]
         }, request.env));
 
@@ -608,8 +618,14 @@ function getAmountInCents(request) {
   return amountInCents;
 }
 
-function isEarlyDiscountAvailable(event, orderTime) {
-  return moment(orderTime).isSameOrBefore(event.earlyDiscount.endDate, 'day');
+function getEarlyDiscount(event, asOf) {
+  if (has(event, 'earlyDiscount') && moment(asOf).isSameOrBefore(event.earlyDiscount.endDate, 'day')) {
+    return event.earlyDiscount;
+  }
+  if (has(event, 'earlyDiscount.extended') &&
+      moment(orderTime).isSameOrBefore(event.earlyDiscount.extended.endDate, 'day')) {
+    return event.earlyDiscount.extended;
+  }
 }
 
 function isBambamDiscountAvailable(bambam, event, orderTime) {
@@ -636,8 +652,13 @@ function calculateBalance(eventInfo, registration, bambam) {
   let totalCharges = 0;
   let totalCredits = 0;
   totalCharges += eventInfo.priceList.roomChoice[order.roomChoice];
-  if (isEarlyDiscountAvailable(eventInfo, order.created_at)) {
-    totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.earlyDiscount.amount;
+  let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at);
+  if (!!earlyDiscount) {
+    if (earlyDiscount.amount > 1) {
+      totalCharges -= earlyDiscount.amount;
+    } else {
+      totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * earlyDiscount.amount;
+    }
   }
   if (isBambamDiscountAvailable(bambam, eventInfo, order.created_at)) {
     totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * eventInfo.bambamDiscount.amount;
@@ -692,6 +713,10 @@ function calculateBalance(eventInfo, registration, bambam) {
   return totalCharges - totalCredits;
 }
 
+function formatMoney(amountInCents, scale=2) {
+  return '$' + (0.01 * amountInCents).toFixed(scale).replace(/(\d)(?=(\d{3})+\.)/g, '$1,');
+}
+
 function sendAdminEmail(values, env) {
   const DEFAULT_FROM_ADDRESS = 'noreply@menschwork.org';
   const DEFAULT_TO_ADDRESS = 'registration@menschwork.org';
@@ -740,15 +765,20 @@ function firebaseArrayElements(arrayObject) {
 
 function fetchBambamStatus(firebase, eventid, userid) {
   const db = firebase.database();
+  const eventRef = db.ref(`events/${eventid}`);
   const eventRegRef = db.ref(`event-registrations/${eventid}`);
   const usersRef = db.ref('users');
 
   return Promise.all([
+    fetchRef(eventRef),
     fetchRef(eventRegRef),
     fetchRef(usersRef)
-  ]).then(([registrations, users]) => {
+  ]).then(([eventInfo, registrations, users]) => {
+    if (!get(eventInfo, 'bambamDiscount.enabled')) {
+      return {};
+    }
     //find my registration
-    let myRegistration = registrations[userid];
+    let myRegistration = !!registrations && registrations[userid];
     //find my user
     let myUser = users[userid];
     if (!myUser) {
