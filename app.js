@@ -823,7 +823,7 @@ function fetchPromotionsStatus(firebase, eventid, userid) {
   ]).then(([eventInfo, registrations, users]) => {
     let promotions = {
       bambam: calculateBambamStatus(eventInfo, registrations || {}, users, userid),
-      roomUpgrade: calculateRoomUpgrade(eventInfo, registrations || {})
+      roomUpgrade: calculateRoomUpgrade(eventInfo, registrations || {}, users, userid)
     };
     let myRegistration = !!registrations && registrations[userid];
     return updatePromotionsStatus(myRegistration, promotions, eventRegRef.child(userid));
@@ -912,7 +912,7 @@ function calculateBambamStatus(eventInfo, registrations, users, userid) {
   };
 }
 
-function calculateRoomUpgrade(eventInfo, registrations) {
+function calculateRoomUpgrade(eventInfo, registrations, users, userid) {
   console.log("calculateRoomUpgrade", eventInfo, registrations);
   if (!get(eventInfo, 'roomUpgrade.enabled')) {
     return {};
@@ -921,6 +921,18 @@ function calculateRoomUpgrade(eventInfo, registrations) {
   //how many orders already made
   const orders = Object.values(registrations).filter(isRegistered);
 
+  // check for user blacklist
+  let myUser = !!users && users[userid];
+  console.log("calculateRoomUpgrade", myUser, eventInfo);
+  if (myUser && eventInfo.roomUpgrade.applyBlacklist) {
+    const blacklist = require('data/roomUpgrade-blacklist.json');
+    console.log("calculateRoomUpgrade2", blacklist);
+    if (blacklist.find(email => email.toLowerCase() === myUser.email.toLowerCase())) {
+      return {
+        available: false
+      };
+    }
+  }
   return {
     available: orders.length < eventInfo.roomUpgrade.firstN,
     timestamp: new Date().getTime()

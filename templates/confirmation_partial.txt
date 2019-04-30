@@ -8,4 +8,7 @@ Please send us an email at %%event_email%% if you have any questions.
 We look forward to seeing you in Connecticut in October.
 
 In brotherhood,
-The %%event_title%% Planning Team
+The %%event_title%% Co-Chairs
+   Ralph Benmergui
+   Michael Evers
+   David Cherenson

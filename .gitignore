@@ -3,3 +3,4 @@
 config/firebaseAccountConfig-dev.json
 config/firebaseAccountConfig-prod.json
 data/imported-profiles.json
+data/roomUpgrade-blacklist.json
