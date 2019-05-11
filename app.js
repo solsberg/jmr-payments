@@ -412,6 +412,45 @@ api.post('/bambam', (request) => {
   });
 });
 
+api.post("/recordExternalPayment", (request) => {
+  console.log("POST /recordExternalPayment: ", request.body);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRef = db.ref(`events/${request.body.eventid}`);
+  const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+
+  //TODO validate inputs
+
+  return authenticateAdminRequest(firebase, request.body.idToken)
+  .then(() => Promise.all([
+    fetchRef(eventRef),
+    fetchRef(eventRegRef),
+    fetchPromotionsStatus(firebase, eventRef.key, eventRegRef.key)
+  ])).then(([eventInfo, registration, promotions]) => {
+    let charge = {
+      id: request.body.externalType,
+      amount: request.body.amount
+    };
+    let timestamp = moment(request.body.paymentDate).valueOf();
+    let promises = [
+      recordRegistrationPayment(eventRegRef, charge, registration, promotions, timestamp)
+    ];
+    if (!get(registration, "order.created_at")) {
+      promises.push(registerInMailchimp(firebase, request.body.userid, eventInfo, request.env));
+    }
+    return Promise.all(promises);
+  })
+  .then(([payment]) => payment)
+  .catch(err => {
+    console.log(err);
+    if (err instanceof Object && !(err instanceof Error)) {
+      return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
+    }
+    throw err;
+  });
+});
+
 function initFirebase(request) {
   let app = firebaseAppCache[request.env.lambdaVersion];
   if (!app)
@@ -433,30 +472,34 @@ function createUserError(userMessage, expected) {
   };
 }
 
-function authenticateRequest(firebase, idToken, uid) {
+function authenticateRequest(firebase, idToken, uid, asAdmin) {
   console.log("verifying id token with firebase");
   return firebase.auth().verifyIdToken(idToken)
   .then(decodedToken => {
-    return new Promise((resolve, reject) => {
-      if (!!uid && decodedToken.uid !== uid) {
-        console.log("userid in request does not match id token");
-        reject(createUserError(generalServerErrorMessage));
-      } else {
-        resolve(decodedToken.uid);
-      }
-    });
+    if (!!uid && decodedToken.uid !== uid) {
+      console.log("userid in request does not match id token");
+      throw createUserError(generalServerErrorMessage);
+    }
+    return decodedToken.uid;
+  });
+}
+
+function authenticateAdminRequest(firebase, idToken) {
+  console.log("verifying id token with firebase");
+  return firebase.auth().verifyIdToken(idToken)
+  .then(decodedToken => firebase.auth().getUser(decodedToken.uid))
+  .then(user => {
+    if (user.customClaims.admin) {
+      return user.uid;
+    } else {
+      console.log("userid in request is not an admin");
+      throw createUserError(generalServerErrorMessage);
+    }
   });
 }
 
 function fetchRef(ref) {
-  return new Promise((resolve, reject) => {
-    ref.once('value').then(snapshot => {
-      resolve(snapshot.val());
-    })
-    .catch(err => {
-      reject(err);
-    });
-  });
+  return ref.once('value').then(snapshot => snapshot.val());
 }
 
 function fetchUserData(firebase, eventid, userid) {
@@ -585,7 +628,7 @@ function recordEarlyDeposit(eventRegRef, charge, registration) {
   });
 }
 
-function recordRegistrationPayment(eventRegRef, charge, registration, promotions) {
+function recordRegistrationPayment(eventRegRef, charge, registration, promotions, timestamp) {
   console.log("recording registration payment in firebase");
   return Promise.all([
     new Promise((resolve, reject) => {      //add payment object
@@ -593,7 +636,7 @@ function recordRegistrationPayment(eventRegRef, charge, registration, promotions
         ['status']: 'paid',
         ['charge']: charge.id,
         ['amount']: charge.amount,
-        ['created_at']: firebaseAdmin.database.ServerValue.TIMESTAMP
+        ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
       };
       eventRegRef.child('account').child('payments').push(payment, err => {
         if (err) {
@@ -608,10 +651,10 @@ function recordRegistrationPayment(eventRegRef, charge, registration, promotions
     new Promise((resolve, reject) => {      //update order
       let order = Object.assign({}, registration.order, registration.cart);
       if (!order.created_at) {
-        order.created_at = firebaseAdmin.database.ServerValue.TIMESTAMP;
+        order.created_at = timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
       }
       if (get(promotions, 'roomUpgrade.available') || (get(registration, 'roomUpgrade.available') &&
-          moment(registration.roomUpgrade.timestamp).add(30, 'minutes').isAfter(moment()))) {
+          moment(registration.roomUpgrade.timestamp).add(30, 'minutes').isAfter(moment(timestamp)))) {
         order.roomUpgrade = true;
       }
       let values = {
@@ -619,7 +662,7 @@ function recordRegistrationPayment(eventRegRef, charge, registration, promotions
         cart: null
       };
       if (!registration.created_at) {
-        values.created_at = firebaseAdmin.database.ServerValue.TIMESTAMP;
+        values.created_at = timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
       }
       eventRegRef.update(values, err => {
         if (err) {
