@@ -965,14 +965,12 @@ function calculateRoomUpgrade(eventInfo, registrations, users, userid) {
 
   //how many orders already made
   const orders = Object.values(registrations)
-    .filter(reg => get(reg, "order.roomUpgrade"));
+    .filter(reg => get(reg, "order.roomUpgrade") && ['basic', 'standard'].includes(reg.order.roomChoice));
 
   // check for user blacklist
   let myUser = !!users && users[userid];
-  console.log("calculateRoomUpgrade", myUser, eventInfo);
   if (myUser && eventInfo.roomUpgrade.applyBlacklist) {
     const blacklist = require('data/roomUpgrade-blacklist.json');
-    console.log("calculateRoomUpgrade2", blacklist);
     if (blacklist.find(email => email.toLowerCase() === myUser.email.toLowerCase())) {
       return {
         available: false
