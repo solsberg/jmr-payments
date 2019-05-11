@@ -259,10 +259,12 @@ api.post("/updateOrder", (request) => {
   .then((order) => {
     let updatedRegistration = Object.assign({}, currentRegistration, {order: order});
     if (initialBalance >= 0 && calculateBalance(currentEventInfo, updatedRegistration, currentPromotions) < 0) {
-      return sendAdminEmail({
-        subject: "JMR refund due",
-        text: "A refund is now due on the account of user " + request.body.userid
-      }, request.env);
+      const userRef = db.ref('users').child(request.body.userid);
+      return fetchRef(userRef)
+      .then(user => sendAdminEmail({
+          subject: "JMR refund due",
+          text: `A refund is now due on the account of ${user.profile.first_name} ${user.profile.last_name} (${user.email})`
+        }, request.env));
     } else {
       return Promise.resolve();
     }
@@ -919,7 +921,8 @@ function calculateRoomUpgrade(eventInfo, registrations, users, userid) {
   }
 
   //how many orders already made
-  const orders = Object.values(registrations).filter(isRegistered);
+  const orders = Object.values(registrations)
+    .filter(reg => get(reg, "order.roomUpgrade"));
 
   // check for user blacklist
   let myUser = !!users && users[userid];
