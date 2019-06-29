@@ -39,6 +39,7 @@ api.post("/charge", (request) => {
   const db = firebase.database();
   const eventRef = db.ref(`events/${request.body.eventid}`);
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+  const userRef = db.ref(`users/${request.body.userid}`);
   let existingRegistration;
   let currentEventInfo;
   let currentPromotions;
@@ -48,7 +49,7 @@ api.post("/charge", (request) => {
   const isEarlyDeposit = request.body.paymentType != 'REGISTRATION';
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, request))
+  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request))
   .then(({registration, eventInfo, promotions}) => {
     existingRegistration = registration;
     currentEventInfo = eventInfo;
@@ -241,6 +242,7 @@ api.post("/updateOrder", (request) => {
   const db = firebase.database();
   const eventRef = db.ref(`events/${request.body.eventid}`);
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+  const userRef = db.ref(`users/${request.body.userid}`);
 
   let initialBalance;
   let currentEventInfo;
@@ -248,7 +250,7 @@ api.post("/updateOrder", (request) => {
   let currentPromotions;
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, request))
+  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request))
   .then(({registration, eventInfo, promotions}) => {
     initialBalance = calculateBalance(eventInfo, registration, promotions);
     currentEventInfo = eventInfo;
@@ -451,6 +453,31 @@ api.post("/recordExternalPayment", (request) => {
   });
 });
 
+api.post("validateCode", (request) => {
+  console.log("POST /validateCode: ", request.body);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRef = db.ref(`events/${request.body.eventid}`);
+  const codesRef = db.ref(`codes`);
+  const userRef = db.ref(`users/${request.body.userid}`);
+
+  return authenticateRequest(firebase, request.body.idToken, request.body.userid)
+  .then(() => Promise.all([
+    fetchRef(eventRef),
+    fetchRef(codesRef),
+    fetchRef(userRef)
+  ])).then(([eventInfo, codes, user]) => validateDiscountCode(request.body.code, eventInfo, user, codes))
+  .catch(err => {
+    console.log(err);
+    if (err instanceof Object && !(err instanceof Error)) {
+      return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
+    }
+    throw err;
+  });
+
+});
+
 function initFirebase(request) {
   let app = firebaseAppCache[request.env.lambdaVersion];
   if (!app)
@@ -515,17 +542,29 @@ function fetchUserData(firebase, eventid, userid) {
   ]).then(([event, registration]) => ({event, registration}));
 }
 
-function validateRegistrationState(firebase, eventRef, eventRegRef, request) {
+function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request) {
   console.log("validating registration state is valid for charge request");
+  const db = firebase.database();
+  const codesRef = db.ref('codes');
+
   return Promise.all([
     fetchRef(eventRef),
     fetchRef(eventRegRef),
-    fetchPromotionsStatus(firebase, eventRef.key, eventRegRef.key)
-  ]).then(([eventInfo, registration, promotions]) => {
+    fetchRef(userRef),
+    fetchPromotionsStatus(firebase, eventRef.key, eventRegRef.key),
+    fetchRef(codesRef)
+  ]).then(([eventInfo, registration, user, promotions, codes]) => {
     console.log("validateRegistrationState: eventInfo", eventInfo);
     console.log("validateRegistrationState: registration", registration);
     console.log("validateRegistrationState: request", request);
     registration = registration || {};
+
+    //discountCode
+    const applyDiscountCode = get(registration, "cart.applyDiscountCode");
+    if (!!applyDiscountCode && !get(registration, "order.discountCode")) {
+      promotions.discountCode = validateDiscountCode(applyDiscountCode, eventInfo, user, codes);
+    }
+
     return new Promise((resolve, reject) => {
       if (!request.body.paymentType) {
         //updateOrder request
@@ -657,6 +696,14 @@ function recordRegistrationPayment(eventRegRef, charge, registration, promotions
           moment(registration.roomUpgrade.timestamp).add(30, 'minutes').isAfter(moment(timestamp)))) {
         order.roomUpgrade = true;
       }
+
+      //discountCode
+      let discountCode = get(promotions, 'discountCode.name');
+      if (!!discountCode && !order.discountCode) {
+        order.discountCode = discountCode;
+      }
+      order.applyDiscountCode = null;
+
       let values = {
         order,
         cart: null
@@ -703,7 +750,7 @@ function getEarlyDiscount(event, asOf) {
     return event.earlyDiscount;
   }
   if (has(event, 'earlyDiscount.extended') &&
-      moment(orderTime).isSameOrBefore(event.earlyDiscount.extended.endDate, 'day')) {
+      moment(asOf).isSameOrBefore(event.earlyDiscount.extended.endDate, 'day')) {
     return event.earlyDiscount.extended;
   }
 }
@@ -733,8 +780,20 @@ function calculateBalance(eventInfo, registration, promotions) {
   let totalCharges = 0;
   let totalCredits = 0;
   totalCharges += eventInfo.priceList.roomChoice[order.roomChoice];
+
+  //discountCode
+  const discountCodeName = order.discountCode || get(promotions, "discountCode.name");
+  let discountCode;
+  if (!!discountCodeName) {
+    let discountCodes = firebaseArrayElements(eventInfo.discountCodes);
+    discountCode = discountCodes.find(c => c.name === discountCodeName);
+  }
+  if (!!discountCode) {
+    totalCharges -= discountCode.amount;
+  }
+
   let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at);
-  if (!!earlyDiscount) {
+  if (!!earlyDiscount && !get(discountCode, 'exclusive')) {
     if (earlyDiscount.amount > 1) {
       totalCharges -= earlyDiscount.amount;
     } else {
@@ -1063,4 +1122,39 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
       });
     }
   });
+}
+
+function isFirstTimer(email) {
+  const importedProfiles = require('data/imported-profiles.json');
+  return !importedProfiles.hasOwnProperty(email);
+}
+
+function validateDiscountCode(code, eventInfo, user, codes) {
+  let matchedCode = firebaseArrayElements(eventInfo.discountCodes).find(eventCode => {
+    let codeInfo = get(codes, eventCode.name);
+    return !!codeInfo && codeInfo.code.toLowerCase() === code.toLowerCase();
+  });
+  if (!matchedCode || !matchedCode.enabled ||
+      (!!matchedCode.startDate && moment().isBefore(matchedCode.startDate))
+  ) {
+    return {
+      valid: false,
+      status: "Invalid code."
+    };
+  } else if (!!matchedCode.endDate && moment().isAfter(moment(matchedCode.endDate).endOf('day'))) {
+    return {
+      valid: false,
+      status: "Code has expired."
+    };
+  } else if (!!matchedCode.firstTimer && !isFirstTimer(user.email)) {
+    return {
+      valid: false,
+      status: "Code valid only for first-time participants."
+    };
+  } else {
+    return {
+      valid: true,
+      name: matchedCode.name
+    };
+  }
 }
