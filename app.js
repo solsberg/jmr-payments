@@ -63,7 +63,7 @@ api.post("/charge", (request) => {
     if (isEarlyDeposit) {
       promises.push(recordEarlyDeposit(eventRegRef, charge, existingRegistration));
     } else {
-      promises.push(recordRegistrationPayment(eventRegRef, charge, existingRegistration, currentPromotions));
+      promises.push(recordRegistrationPayment(eventRegRef, charge, null, existingRegistration, currentPromotions));
       if (!get(existingRegistration, "order.created_at")) {
         promises.push(registerInMailchimp(firebase, request.body.userid, currentEventInfo, request.env));
       }
@@ -430,13 +430,21 @@ api.post("/recordExternalPayment", (request) => {
     fetchRef(eventRegRef),
     fetchPromotionsStatus(firebase, eventRef.key, eventRegRef.key)
   ])).then(([eventInfo, registration, promotions]) => {
-    let charge = {
-      id: request.body.externalType,
-      amount: request.body.amount
-    };
+    let charge;
+    let credit;
+    if (request.body.externalType === 'CREDIT') {
+      credit = {
+        amount: request.body.amount
+      };
+    } else {
+      charge = {
+        id: request.body.externalType,
+        amount: request.body.amount
+      };
+    }
     let timestamp = moment(request.body.paymentDate).valueOf();
     let promises = [
-      recordRegistrationPayment(eventRegRef, charge, registration, promotions, timestamp)
+      recordRegistrationPayment(eventRegRef, charge, credit, registration, promotions, timestamp)
     ];
     if (!get(registration, "order.created_at")) {
       promises.push(registerInMailchimp(firebase, request.body.userid, eventInfo, request.env));
@@ -667,23 +675,34 @@ function recordEarlyDeposit(eventRegRef, charge, registration) {
   });
 }
 
-function recordRegistrationPayment(eventRegRef, charge, registration, promotions, timestamp) {
+function recordRegistrationPayment(eventRegRef, charge, credit, registration, promotions, timestamp) {
   console.log("recording registration payment in firebase");
   return Promise.all([
     new Promise((resolve, reject) => {      //add payment object
-      let payment = {
-        ['status']: 'paid',
-        ['charge']: charge.id,
-        ['amount']: charge.amount,
-        ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
-      };
-      eventRegRef.child('account').child('payments').push(payment, err => {
+      let collectionRef;
+      let transaction;
+      if (!!charge) {
+        transaction = {
+          ['status']: 'paid',
+          ['charge']: charge.id,
+          ['amount']: charge.amount,
+          ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
+        };
+        collectionRef = eventRegRef.child('account').child('payments');
+      } else {
+        transaction = {
+          ['amount']: credit.amount,
+          ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
+        };
+        collectionRef = eventRegRef.child('account').child('credits');
+      }
+      collectionRef.push(transaction, err => {
         if (err) {
           console.log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
           console.log("successful write request to firebase");
-          resolve(payment);
+          resolve(transaction);
         }
       });
     }),
@@ -723,7 +742,7 @@ function recordRegistrationPayment(eventRegRef, charge, registration, promotions
         }
       });
     })
-  ]).then(([payment, _ignore]) => payment);
+  ]).then(([transaction, _ignore]) => transaction);
 }
 
 function updateOrder(eventRegRef, registration, values) {
