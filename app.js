@@ -248,19 +248,21 @@ api.post("/updateOrder", (request) => {
   let currentEventInfo;
   let currentRegistration;
   let currentPromotions;
+  let currentUser;
 
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request))
-  .then(({registration, eventInfo, promotions}) => {
-    initialBalance = calculateBalance(eventInfo, registration, promotions);
+  .then(({registration, eventInfo, promotions, user}) => {
+    initialBalance = calculateBalance(eventInfo, registration, user, promotions);
     currentEventInfo = eventInfo;
     currentRegistration = registration;
     currentPromotions = promotions;
+    currentUser = user;
     return updateOrder(eventRegRef, registration, request.body.values);
   })
   .then((order) => {
     let updatedRegistration = Object.assign({}, currentRegistration, {order: order});
-    if (initialBalance >= 0 && calculateBalance(currentEventInfo, updatedRegistration, currentPromotions) < 0) {
+    if (initialBalance >= 0 && calculateBalance(currentEventInfo, updatedRegistration, currentUser, currentPromotions) < 0) {
       const userRef = db.ref('users').child(request.body.userid);
       return fetchRef(userRef)
       .then(user => sendAdminEmail({
@@ -584,7 +586,7 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
           reject(createUserError(generalServerErrorMessage));
         }
       } else if (request.body.paymentType === 'REGISTRATION') {
-        const balance = calculateBalance(eventInfo, registration, promotions);
+        const balance = calculateBalance(eventInfo, registration, user, promotions);
         console.log("balance", balance);
         let order = Object.assign({}, registration.order, registration.cart);
         if (!order.acceptedTerms) {
@@ -608,7 +610,7 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
           reject(createUserError(generalServerErrorMessage));
         }
       }
-      resolve({registration, eventInfo, promotions});
+      resolve({registration, eventInfo, promotions, user});
     });
   });
 }
@@ -791,7 +793,22 @@ function isBambamDiscountAvailable(bambam, event, orderTime) {
   }
 }
 
-function calculateBalance(eventInfo, registration, promotions) {
+function isPreRegistered(user, event) {
+  if (!user || !has(event, 'preRegistration.users')) {
+    return false;
+  }
+  return Object.keys(event.preRegistration.users)
+    .find(k => event.preRegistration.users[k] === user.email) != null;
+}
+
+function getPreRegistrationDiscount(user, event, asOf) {
+  if (isPreRegistered(user, event) && has(event, 'preRegistration.discount') &&
+      moment(asOf).isSameOrBefore(event.preRegistration.discount.endDate, 'day')) {
+    return event.preRegistration.discount;
+  }
+}
+
+function calculateBalance(eventInfo, registration, user, promotions) {
   let order = Object.assign({}, registration.order, registration.cart);
   let {bambam} = promotions;
 
@@ -811,8 +828,17 @@ function calculateBalance(eventInfo, registration, promotions) {
     totalCharges -= discountCode.amount;
   }
 
+  let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at);
+  if (!!preRegistrationDiscount && !get(discountCode, 'exclusive')) {
+    if (preRegistrationDiscount.amount > 1) {
+      totalCharges -= preRegistrationDiscount.amount;
+    } else {
+      totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * preRegistrationDiscount.amount;
+    }
+  }
+
   let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at);
-  if (!!earlyDiscount && !get(discountCode, 'exclusive')) {
+  if (!!earlyDiscount && !preRegistrationDiscount && !get(discountCode, 'exclusive')) {
     if (earlyDiscount.amount > 1) {
       totalCharges -= earlyDiscount.amount;
     } else {
@@ -838,6 +864,10 @@ function calculateBalance(eventInfo, registration, promotions) {
   //early deposit credit
   if (registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
     totalCredits += 3600;
+  }
+
+  if (isPreRegistered(user, eventInfo)) {
+    totalCredits += eventInfo.preRegistration.depositAmount;
   }
 
   //previous payments
