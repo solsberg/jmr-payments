@@ -830,19 +830,23 @@ function calculateBalance(eventInfo, registration, user, promotions) {
 
   let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at);
   if (!!preRegistrationDiscount && !get(discountCode, 'exclusive')) {
-    if (preRegistrationDiscount.amount > 1) {
-      totalCharges -= preRegistrationDiscount.amount;
-    } else {
-      totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * preRegistrationDiscount.amount;
+    if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
+      if (preRegistrationDiscount.amount > 1) {
+        totalCharges -= preRegistrationDiscount.amount;
+      } else {
+        totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * preRegistrationDiscount.amount;
+      }
     }
   }
 
   let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at);
   if (!!earlyDiscount && !preRegistrationDiscount && !get(discountCode, 'exclusive')) {
-    if (earlyDiscount.amount > 1) {
-      totalCharges -= earlyDiscount.amount;
-    } else {
-      totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * earlyDiscount.amount;
+    if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
+      if (earlyDiscount.amount > 1) {
+        totalCharges -= earlyDiscount.amount;
+      } else {
+        totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * earlyDiscount.amount;
+      }
     }
   }
   if (isBambamDiscountAvailable(bambam, eventInfo, order.created_at)) {
