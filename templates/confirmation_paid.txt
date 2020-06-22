@@ -1,13 +1,13 @@
 Dear %%first_name%%
 
-Thank you for completing your registration for %%event_title%%. We’re very happy that you’ll be joining us at the retreat.
+Thank you for completing your registration for %%event_title%%. We’re very happy that you’ll be joining us for the retreat.
 
 Please send us an email at %%event_email%% if you have any questions.
-We look forward to seeing you in Connecticut in November.
+We look forward to seeing you in November.
 
 
 In brotherhood,
 The %%event_title%% Co-Chairs
-   Ralph Benmergui
-   Michael Evers
-   David Cherenson
+   Roger Zimmerman
+   Harold Belkowitz
+   Elliott Myrowitz
