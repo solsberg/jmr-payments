@@ -1128,7 +1128,7 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
         }
       }, function optionalCallback(err, httpResponse, body) {
         console.log("mailchimp update", {err, httpResponse, body});
-        if ((err && response.statusCode == 404) ||
+        if ((err && httpResponse.statusCode == 404) ||
             (!err && get(body, "status", 0) == 404)) {
           resolve({status: 'notfound', user});
         } else if (err) {
@@ -1145,7 +1145,7 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
       let {user} = rslt;
       return new Promise((resolve, reject) => {
         requestApi.post({
-          url: env.mailchimp_list_url + '/members',
+          url: env.mailchimp_list_url + '/members?skip_merge_validation=true',
           json: true,
           body: {
             email_address: user.email,
@@ -1153,7 +1153,12 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
             status: 'subscribed',
             merge_fields: {
               FNAME: user.profile.first_name,
-              LNAME: user.profile.last_name
+              LNAME: user.profile.last_name,
+              ADDRESS_1: user.profile.address_1,
+              ADDRESS_2: user.profile.address_2,
+              CITY: user.profile.city,
+              STATE: user.profile.state,
+              PHONE: user.profile.phone
             },
             interests: {
               [eventInfo.mailchimpGroupId]: true
