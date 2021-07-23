@@ -592,6 +592,9 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
         if (!order.acceptedTerms) {
           console.log("terms and conditions not accepted");
           reject(createUserError(generalServerErrorMessage));
+        } else if (eventInfo.acceptCovidPolicy && !order.acceptedCovidPolicy) {
+          console.log("covid policy not accepted");
+          reject(createUserError(generalServerErrorMessage));
         } else if (getAmountInCents(request) > balance) {
           console.log("charge amount exceeds registration account balance");
           reject(createUserError(generalServerErrorMessage));

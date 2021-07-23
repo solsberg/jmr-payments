@@ -2,11 +2,14 @@ Dear %%first_name%%
 
 Thank you for completing your registration for %%event_title%%. We’re very happy that you’ll be joining us for the retreat.
 
-Please send us an email at %%event_email%% if you have any questions.
+If you have further questions about registration, financial aid, scholarships, etc., please contact registration@menschwork.org.
+For questions about the retreat itself, please contact jmr@menschwork.org.
+
 We look forward to seeing you in October.
 
 
 In brotherhood,
+
 The %%event_title%% Co-Chairs
    Bill Magaliff
    David Malchman
