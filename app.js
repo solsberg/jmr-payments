@@ -769,7 +769,10 @@ function getAmountInCents(request) {
   return amountInCents;
 }
 
-function getEarlyDiscount(event, asOf) {
+function getEarlyDiscount(event, asOf, roomType) {
+  if (roomType && get(event, `roomTypes.${roomType}.noEarlyDiscount`)) {
+    return null;
+  }
   if (has(event, 'earlyDiscount') && moment(asOf).isSameOrBefore(event.earlyDiscount.endDate, 'day')) {
     return event.earlyDiscount;
   }
@@ -842,7 +845,7 @@ function calculateBalance(eventInfo, registration, user, promotions) {
     }
   }
 
-  let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at);
+  let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at, order.roomChoice);
   if (!!earlyDiscount && !preRegistrationDiscount && !get(discountCode, 'exclusive')) {
     if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
       if (earlyDiscount.amount > 1) {
