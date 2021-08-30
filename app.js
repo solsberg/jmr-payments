@@ -807,7 +807,10 @@ function isPreRegistered(user, event) {
     .find(k => event.preRegistration.users[k] === user.email) != null;
 }
 
-function getPreRegistrationDiscount(user, event, asOf) {
+function getPreRegistrationDiscount(user, event, asOf, roomType) {
+  if (roomType && get(event, `roomTypes.${roomType}.noEarlyDiscount`)) {
+    return null;
+  }
   if (isPreRegistered(user, event) && has(event, 'preRegistration.discount') &&
       moment(asOf).isSameOrBefore(event.preRegistration.discount.endDate, 'day')) {
     return event.preRegistration.discount;
@@ -834,7 +837,7 @@ function calculateBalance(eventInfo, registration, user, promotions) {
     totalCharges -= discountCode.amount;
   }
 
-  let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at);
+  let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at, order.roomChoice);
   if (!!preRegistrationDiscount && !get(discountCode, 'exclusive')) {
     if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
       if (preRegistrationDiscount.amount > 1) {
