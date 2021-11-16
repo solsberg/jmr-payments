@@ -9,7 +9,7 @@
   "author": "solsberg",
   "license": "ISC",
   "dependencies": {
-    "aws-sdk": "^2.206.0",
+    "aws-sdk": "^2.814.0",
     "claudia-api-builder": "^3.0.1",
     "firebase-admin": "^5.8.1",
     "lodash": "^4.17.10",
