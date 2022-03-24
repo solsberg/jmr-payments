@@ -799,19 +799,24 @@ function isBambamDiscountAvailable(bambam, event, orderTime) {
   }
 }
 
-function isPreRegistered(user, event) {
+function isPreRegistered(user, event, onlyDiscount) {
   if (!user || !has(event, 'preRegistration.users')) {
     return false;
   }
-  return Object.keys(event.preRegistration.users)
-    .find(k => event.preRegistration.users[k] === user.email) != null;
+  let entry = Object.keys(event.preRegistration.users)
+    .find(k => event.preRegistration.users[k] === user.email);
+  if (!entry && !onlyDiscount && has(event, 'preRegistration.usersNoDiscount')) {
+    entry = Object.keys(event.preRegistration.usersNoDiscount)
+      .find(k => event.preRegistration.usersNoDiscount[k] === user.email);
+  }
+  return entry != null;
 }
 
 function getPreRegistrationDiscount(user, event, asOf, roomType) {
   if (roomType && get(event, `roomTypes.${roomType}.noEarlyDiscount`)) {
     return null;
   }
-  if (isPreRegistered(user, event) && has(event, 'preRegistration.discount') &&
+  if (isPreRegistered(user, event, true) && has(event, 'preRegistration.discount') &&
       moment(asOf).isSameOrBefore(event.preRegistration.discount.endDate, 'day')) {
     return event.preRegistration.discount;
   }
