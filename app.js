@@ -817,6 +817,16 @@ function getPreRegistrationDiscount(user, event, asOf, roomType) {
   }
 }
 
+function getLateCharge(event, asOf, roomType) {
+  if (roomType && get(event, `roomTypes.${roomType}.noLateCharge`)) {
+    return null;
+  }
+  if (has(event, 'priceList.lateCharge') &&
+      moment(asOf).isSameOrAfter(event.priceList.lateCharge.startDate, 'day')) {
+    return event.priceList.lateCharge;
+  }
+}
+
 function calculateBalance(eventInfo, registration, user, promotions) {
   let order = Object.assign({}, registration.order, registration.cart);
   let {bambam} = promotions;
@@ -855,6 +865,16 @@ function calculateBalance(eventInfo, registration, user, promotions) {
         totalCharges -= earlyDiscount.amount;
       } else {
         totalCharges -= eventInfo.priceList.roomChoice[order.roomChoice] * earlyDiscount.amount;
+      }
+    }
+  }
+  let lateCharge = getLateCharge(eventInfo, order.created_at, order.roomChoice);
+  if (!!lateCharge) {
+    if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
+      if (lateCharge.amount > 1) {
+        totalCharges += lateCharge.amount;
+      } else {
+        totalCharges += eventInfo.priceList.roomChoice[order.roomChoice] * lateCharge.amount;
       }
     }
   }
