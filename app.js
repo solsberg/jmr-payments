@@ -587,6 +587,10 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
         }
       } else if (request.body.paymentType === 'REGISTRATION') {
         const balance = calculateBalance(eventInfo, registration, user, promotions);
+        let minimumPayment = eventInfo.priceList.minimumPayment;
+        if (isPreRegistered(user, eventInfo)) {
+          minimumPayment -= eventInfo.preRegistration.depositAmount;
+        }
         console.log("balance", balance);
         let order = Object.assign({}, registration.order, registration.cart);
         if (!order.acceptedTerms) {
@@ -599,7 +603,7 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
           console.log("charge amount exceeds registration account balance");
           reject(createUserError(generalServerErrorMessage));
         } else if (getAmountInCents(request) < balance &&
-            getAmountInCents(request) < eventInfo.priceList.minimumPayment) {
+            getAmountInCents(request) < minimumPayment) {
           console.log("charge amount below minimum payment amount");
           reject(createUserError(generalServerErrorMessage));
         }
