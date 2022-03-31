@@ -897,7 +897,11 @@ function calculateBalance(eventInfo, registration, user, promotions) {
     totalCharges += eventInfo.priceList.refrigerator;
   }
   if (order.thursdayNight) {
-    totalCharges += eventInfo.priceList.thursdayNight;
+    let thursdayNightRate = eventInfo.priceList.thursdayNight;
+    if (order.singleSupplement && has(eventInfo, 'priceList.thursdayNightSingle')) {
+      thursdayNightRate = eventInfo.priceList.thursdayNightSingle;
+    }
+    totalCharges += thursdayNightRate;
   }
   if (order.donation) {
     totalCharges += order.donation;
