@@ -808,10 +808,10 @@ function isPreRegistered(user, event, onlyDiscount) {
     return false;
   }
   let entry = Object.keys(event.preRegistration.users)
-    .find(k => event.preRegistration.users[k] === user.email);
+    .find(k => event.preRegistration.users[k].toLowerCase() === user.email.toLowerCase());
   if (!entry && !onlyDiscount && has(event, 'preRegistration.usersNoDiscount')) {
     entry = Object.keys(event.preRegistration.usersNoDiscount)
-      .find(k => event.preRegistration.usersNoDiscount[k] === user.email);
+      .find(k => event.preRegistration.usersNoDiscount[k].toLowerCase() === user.email.toLowerCase());
   }
   return entry != null;
 }
