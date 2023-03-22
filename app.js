@@ -857,7 +857,7 @@ function calculateBalance(eventInfo, registration, user, promotions) {
   }
 
   let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at, order.roomChoice);
-  if (!!preRegistrationDiscount && !get(discountCode, 'exclusive')) {
+  if (!!preRegistrationDiscount && !get(discountCode, 'exclusive') && !order.waiveDiscount) {
     if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
       if (preRegistrationDiscount.amount > 1) {
         totalCharges -= preRegistrationDiscount.amount;
