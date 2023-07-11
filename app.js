@@ -587,12 +587,15 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
         }
       } else if (request.body.paymentType === 'REGISTRATION') {
         const balance = calculateBalance(eventInfo, registration, user, promotions);
+        console.log("balance", balance);
+        let order = Object.assign({}, registration.order, registration.cart);
         let minimumPayment = eventInfo.priceList.minimumPayment;
         if (isPreRegistered(user, eventInfo)) {
           minimumPayment -= eventInfo.preRegistration.depositAmount;
         }
-        console.log("balance", balance);
-        let order = Object.assign({}, registration.order, registration.cart);
+        if (has(order, 'minimumPayment')) {
+          minimumPayment = order.minimumPayment;
+        }
         if (!order.acceptedTerms) {
           console.log("terms and conditions not accepted");
           reject(createUserError(generalServerErrorMessage));
