@@ -589,6 +589,8 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
         const balance = calculateBalance(eventInfo, registration, user, promotions);
         console.log("balance", balance);
         let order = Object.assign({}, registration.order, registration.cart);
+        const isWaitlist = !has(order, 'created_at') && eventInfo.status == 'WAITLIST' && !order.allowWaitlist;
+
         let minimumPayment = eventInfo.priceList.minimumPayment;
         if (isPreRegistered(user, eventInfo)) {
           minimumPayment -= eventInfo.preRegistration.depositAmount;
@@ -601,6 +603,9 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
           reject(createUserError(generalServerErrorMessage));
         } else if (eventInfo.acceptCovidPolicy && !order.acceptedCovidPolicy) {
           console.log("covid policy not accepted");
+          reject(createUserError(generalServerErrorMessage));
+        } else if (isWaitlist) {
+          console.log("user on waitlist without place");
           reject(createUserError(generalServerErrorMessage));
         } else if (getAmountInCents(request) > balance) {
           console.log("charge amount exceeds registration account balance");
