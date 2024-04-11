@@ -834,6 +834,15 @@ function getPreRegistrationDiscount(user, event, asOf, roomType) {
   }
 }
 
+function getAvailableCredit(user, event) {
+  if (!user || !has(event, 'availableCredit')) {
+    return 0;
+  }
+  let entry = Object.values(event.availableCredit)
+    .find(c => c.email.toLowerCase() === user.email.toLowerCase());
+  return !!entry ? entry.amount : 0;
+}
+
 function getLateCharge(event, asOf, roomType) {
   if (roomType && get(event, `roomTypes.${roomType}.noLateCharge`)) {
     return null;
@@ -923,6 +932,8 @@ function calculateBalance(eventInfo, registration, user, promotions) {
   if (isPreRegistered(user, eventInfo)) {
     totalCredits += eventInfo.preRegistration.depositAmount;
   }
+
+  totalCredits += getAvailableCredit(user, eventInfo);
 
   //previous payments
   let account = registration.account;
