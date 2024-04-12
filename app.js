@@ -595,6 +595,9 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
         if (isPreRegistered(user, eventInfo)) {
           minimumPayment -= eventInfo.preRegistration.depositAmount;
         }
+        if (!!order.donation) {
+          minimumPayment += order.donation;
+        }
         if (has(order, 'minimumPayment')) {
           minimumPayment = order.minimumPayment;
         }
