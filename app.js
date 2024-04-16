@@ -697,7 +697,9 @@ function recordEarlyDeposit(eventRegRef, charge, registration) {
 
 function recordRegistrationPayment(eventRegRef, charge, credit, registration, promotions, timestamp) {
   console.log("recording registration payment in firebase");
-  return Promise.all([
+  let order = Object.assign({}, registration.order, registration.cart);
+  let donation = order.donation;
+  let promises = [
     new Promise((resolve, reject) => {      //add payment object
       let collectionRef;
       let transaction;
@@ -727,7 +729,6 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
       });
     }),
     new Promise((resolve, reject) => {      //update order
-      let order = Object.assign({}, registration.order, registration.cart);
       if (!order.created_at) {
         order.created_at = timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
       }
@@ -742,6 +743,7 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
         order.discountCode = discountCode;
       }
       order.applyDiscountCode = null;
+      delete order.donation;
 
       let values = {
         order,
@@ -762,7 +764,26 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
         }
       });
     })
-  ]).then(([transaction, _ignore]) => transaction);
+  ];
+  if (!!donation) {
+    promises.push(new Promise((resolve, reject) => {      //add donation object
+      let transaction = {
+        ['amount']: order.donation,
+        ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
+      };
+      eventRegRef.child('account').child('donations').push(transaction, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful write request to firebase");
+          resolve(transaction);
+        }
+      });
+    }));
+  }
+
+  return Promise.all(promises).then(([transaction, _ignore]) => transaction);
 }
 
 function updateOrder(eventRegRef, registration, values) {
