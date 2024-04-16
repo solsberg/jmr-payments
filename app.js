@@ -988,6 +988,14 @@ function calculateBalance(eventInfo, registration, user, promotions) {
       });
   }
 
+  //previous donations
+  if (!!account && !!account.donations) {
+    Object.keys(account.donations)
+      .forEach(p => {
+        totalCredits -= p.amount;
+      });
+  }
+
   return totalCharges - totalCredits;
 }
 
