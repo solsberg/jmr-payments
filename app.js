@@ -590,17 +590,25 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
         console.log("balance", balance);
         let order = Object.assign({}, registration.order, registration.cart);
         const isWaitlist = !has(order, 'created_at') && eventInfo.status == 'WAITLIST' && !order.allowWaitlist;
+        const isNewRegistration = !registration.order;
 
-        let minimumPayment = eventInfo.priceList.minimumPayment;
-        if (isPreRegistered(user, eventInfo)) {
-          minimumPayment -= eventInfo.preRegistration.depositAmount;
+        let minimumPayment = 0;
+        if (isNewRegistration) {
+          minimumPayment = eventInfo.priceList.minimumPayment;
+          if (isPreRegistered(user, eventInfo)) {
+            minimumPayment -= eventInfo.preRegistration.depositAmount;
+          }
         }
-        if (!!order.donation) {
-          minimumPayment += order.donation;
-        }
-        if (has(order, 'minimumPayment')) {
+        if (has(order, 'minimumPayment') && order.minimumPayment < minimumPayment) {
           minimumPayment = order.minimumPayment;
         }
+        if (!!order.donation) {
+          minimumPayment += donation;
+        }
+        if (moment().isAfter(eventInfo.finalPaymentDate)) {
+          minimumPayment = balance;
+        }
+
         if (!order.acceptedTerms) {
           console.log("terms and conditions not accepted");
           reject(createUserError(generalServerErrorMessage));
