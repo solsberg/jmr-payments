@@ -603,7 +603,7 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
           minimumPayment = order.minimumPayment;
         }
         if (!!order.donation) {
-          minimumPayment += donation;
+          minimumPayment += order.donation;
         }
         if (moment().isAfter(eventInfo.finalPaymentDate)) {
           minimumPayment = balance;
