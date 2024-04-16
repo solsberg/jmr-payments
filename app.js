@@ -768,7 +768,7 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
   if (!!donation) {
     promises.push(new Promise((resolve, reject) => {      //add donation object
       let transaction = {
-        ['amount']: order.donation,
+        ['amount']: donation,
         ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
       };
       eventRegRef.child('account').child('donations').push(transaction, err => {
