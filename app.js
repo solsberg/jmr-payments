@@ -737,8 +737,14 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
       });
     }),
     new Promise((resolve, reject) => {      //update order
+      let transactionTime = null;
+      if (!!credit) {
+        transactionTime = get(registration, 'scholarship.created_at');
+      }
+      transactionTime ||= timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
+
       if (!order.created_at) {
-        order.created_at = timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
+        order.created_at = transactionTime;
       }
       if (get(promotions, 'roomUpgrade.available') || (get(registration, 'roomUpgrade.available') &&
           moment(registration.roomUpgrade.timestamp).add(30, 'minutes').isAfter(moment(timestamp)))) {
@@ -758,7 +764,7 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
         cart: null
       };
       if (!registration.created_at) {
-        values.created_at = timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
+        values.created_at = transactionTime;
       }
       eventRegRef.update(values, err => {
         if (err) {
@@ -905,7 +911,7 @@ function calculateBalance(eventInfo, registration, user, promotions) {
     totalCharges -= discountCode.amount;
   }
 
-  let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at, order.roomChoice);
+  let preRegistrationDiscount = getPreRegistrationDiscount(user, eventInfo, order.created_at || get(registration, 'scholarship.created_at'), order.roomChoice);
   if (!!preRegistrationDiscount && !get(discountCode, 'exclusive') && !order.waiveDiscount) {
     if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
       if (preRegistrationDiscount.amount > 1) {
@@ -916,7 +922,7 @@ function calculateBalance(eventInfo, registration, user, promotions) {
     }
   }
 
-  let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at, order.roomChoice);
+  let earlyDiscount = getEarlyDiscount(eventInfo, order.created_at || get(registration, 'scholarship.created_at'), order.roomChoice);
   if (!!earlyDiscount && !preRegistrationDiscount && !get(discountCode, 'exclusive')) {
     if (!eventInfo.onlineOnly || order.roomChoice == "online_base") {
       if (earlyDiscount.amount > 1) {
