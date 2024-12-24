@@ -488,6 +488,64 @@ api.post("validateCode", (request) => {
 
 });
 
+api.post("checkout", (request) => {
+  console.log("POST /checkout: ", request.body);
+  const stripe = stripeApi(request.env.stripe_secret_api_key);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRef = db.ref(`events/${request.body.eventid}`);
+  const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+  const userRef = db.ref(`users/${request.body.userid}`);
+  // let existingRegistration;
+  // let currentEventInfo;
+  // let currentPromotions;
+
+  //TODO validate inputs
+
+  const isEarlyDeposit = request.body.paymentType != 'REGISTRATION';
+
+  return authenticateRequest(firebase, request.body.idToken, request.body.userid)
+  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request))
+  .then(({registration, eventInfo, promotions, user}) => {
+    // existingRegistration = registration;
+    // currentEventInfo = eventInfo;
+    // currentPromotions = promotions;
+    // return createCharge(stripe, request);
+    return stripe.checkout.sessions.create({
+      ui_mode: 'embedded',
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: 'JMR Registration',
+            },
+            unit_amount: getAmountInCents(request),
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      customer_email: user.email.toLowerCase(),
+      // return_url: `https://register.menschwork.org/return?session_id={CHECKOUT_SESSION_ID}`,
+      redirect_on_completion: 'never',
+    });
+  })
+  // .then((session) => {
+  //   return {
+  //     clientSecret: session.client_secret,
+  //   };
+  // })
+  .catch(err => {
+    console.log(err);
+    if (err instanceof Object && !(err instanceof Error)) {
+      return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
+    }
+    throw err;
+  });
+});
+
 function initFirebase(request) {
   let app = firebaseAppCache[request.env.lambdaVersion];
   if (!app)
