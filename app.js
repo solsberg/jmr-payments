@@ -463,6 +463,43 @@ api.post("/recordExternalPayment", (request) => {
   });
 });
 
+api.post("/cancelRegistration", (request) => {
+  console.log("POST /cancelRegistration: ", request.body);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const eventRef = db.ref(`events/${request.body.eventid}`);
+  const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
+
+  //TODO validate inputs
+
+  return authenticateAdminRequest(firebase, request.body.idToken)
+  .then(() => fetchRef(eventRef))
+  .then((eventInfo) => {
+    return Promise.all([
+      new Promise((resolve, reject) => {
+        eventRegRef.child('order').update({ cancelled: true }, err => {
+          if (err) {
+            console.log("received error from firebase", err);
+            reject(createUserError(generalServerErrorMessage));
+          } else {
+            console.log("successful update request to firebase");
+            resolve(true);
+          }
+        });
+      }),
+      unregisterInMailchimp(firebase, request.body.userid, eventInfo, request.env)
+    ]);
+  })
+  .catch(err => {
+    console.log(err);
+    if (err instanceof Object && !(err instanceof Error)) {
+      return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
+    }
+    throw err;
+  });
+});
+
 api.post("validateCode", (request) => {
   console.log("POST /validateCode: ", request.body);
   const firebase = initFirebase(request);
@@ -497,21 +534,12 @@ api.post("checkout", (request) => {
   const eventRef = db.ref(`events/${request.body.eventid}`);
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
   const userRef = db.ref(`users/${request.body.userid}`);
-  // let existingRegistration;
-  // let currentEventInfo;
-  // let currentPromotions;
 
   //TODO validate inputs
 
-  const isEarlyDeposit = request.body.paymentType != 'REGISTRATION';
-
   return authenticateRequest(firebase, request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request))
-  .then(({registration, eventInfo, promotions, user}) => {
-    // existingRegistration = registration;
-    // currentEventInfo = eventInfo;
-    // currentPromotions = promotions;
-    // return createCharge(stripe, request);
+  .then(({ user }) => {
     return stripe.checkout.sessions.create({
       ui_mode: 'embedded',
       line_items: [
@@ -528,15 +556,20 @@ api.post("checkout", (request) => {
       ],
       mode: 'payment',
       customer_email: user.email.toLowerCase(),
+      client_reference_id: `${request.body.eventid}:${request.body.userid}`,
+      metadata: {
+        eventid: request.body.eventid,
+        userid: request.body.userid
+      },
       // return_url: `https://register.menschwork.org/return?session_id={CHECKOUT_SESSION_ID}`,
       redirect_on_completion: 'never',
     });
   })
-  // .then((session) => {
-  //   return {
-  //     clientSecret: session.client_secret,
-  //   };
-  // })
+  .then((session) => {
+    return {
+      clientSecret: session.client_secret,
+    };
+  })
   .catch(err => {
     console.log(err);
     if (err instanceof Object && !(err instanceof Error)) {
@@ -545,6 +578,65 @@ api.post("checkout", (request) => {
     throw err;
   });
 });
+
+api.post("stripe_payments_webhook", (request) => {
+  console.log("POST /stripe_payments_webhook: ", request.body);
+  const stripe = stripeApi(request.env.stripe_secret_api_key);
+  const firebase = initFirebase(request);
+  const db = firebase.database();
+
+  const payload = request.rawBody;
+  const sig = request.normalizedHeaders['stripe-signature'];
+
+  let event = stripe.webhooks.constructEvent(payload, sig, request.env.stripe_payments_webhook_secret);
+
+  // if (
+  //   event.type === 'checkout.session.completed'
+  //   || event.type === 'checkout.session.async_payment_succeeded'
+  // ) {
+  //   fulfillCheckout(event.data.object.id);
+  // }
+  // console.log("webhook event:", event)
+
+  return fulfillCheckout(event.data.object.id, stripe, firebase).then(() => {
+    // Return a response to acknowledge receipt of the event
+    return { received: true };
+  });
+});
+
+function fulfillCheckout(sessionId, stripe, firebase) {
+  // TODO: Make this function safe to run multiple times,
+  // even concurrently, with the same session ID
+
+  // TODO: Make sure fulfillment hasn't already been
+  // peformed for this Checkout Session
+
+  // Retrieve the Checkout Session from the API with line_items expanded
+  return stripe.checkout.sessions.retrieve(sessionId, {
+    expand: ['line_items'],
+  })
+  .then((checkoutSession) => {
+    console.log('retrieved checkout session:', checkoutSession);
+
+    // fetch event and registration data from firebase
+    const db = firebase.database();
+    const { eventid, userid } = checkoutSession.metadata;
+    const eventRegRef = db.ref(`event-registrations/${eventid}/${userid}`);
+
+    return Promise.all([
+      fetchRef(eventRegRef),
+      fetchPromotionsStatus(firebase, eventid, userid),
+    ]).then(([registration, promotions]) => {
+      //discountCode
+      const applyDiscountCode = get(registration, "cart.applyDiscountCode");
+      if (!!applyDiscountCode && !get(registration, "order.discountCode")) {
+        promotions.discountCode = validateDiscountCode(applyDiscountCode, eventInfo, user, codes);
+      }
+
+      return recordRegistrationPayment_new(eventRegRef, checkoutSession, null, registration, promotions);
+    });
+  });
+}
 
 function initFirebase(request) {
   let app = firebaseAppCache[request.env.lambdaVersion];
@@ -856,6 +948,198 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
   }
 
   return Promise.all(promises).then(([transaction, _ignore]) => transaction);
+}
+
+function recordRegistrationPayment_new(eventRegRef, checkoutSession, credit, registration, promotions, timestamp) {
+  console.log("recording registration payment in firebase");
+  let order = Object.assign({}, registration.order, registration.cart);
+  let donationToStore = checkoutSession.payment_status === "paid" ? order.donation : null;
+  let promises = [
+    new Promise((resolve, reject) => {      //add payment object
+      let collectionRef;
+      let newTransaction;
+      let existingTransactionKey;
+      let existingTransaction;
+      if (!!checkoutSession) {
+        const existingTransactions = get(registration, "account.payments", {});
+        existingTransactionKey = Object.keys(get(registration, "account.payments", {}))
+          .find(k => existingTransactions[k].checkout_session_id === checkoutSession.id);
+        if (!existingTransactionKey) {
+          newTransaction = {
+            ['status']: checkoutSession.payment_status === "paid" ? "paid" : "pending",
+            ['checkout_session_id']: checkoutSession.id,
+            ['payment_id']: checkoutSession.payment_intent,
+            ['amount']: checkoutSession.amount_total,
+            ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
+          };
+          collectionRef = eventRegRef.child('account').child('payments');
+        } else {
+          existingTransaction = existingTransactions[existingTransactionKey];
+        }
+      } else {
+        newTransaction = {
+          ['amount']: credit.amount,
+          ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
+        };
+        collectionRef = eventRegRef.child('account').child('credits');
+      }
+      if (newTransaction) {
+        collectionRef.push(newTransaction, err => {
+          if (err) {
+            console.log("received error from firebase", err);
+            reject(createUserError(generalServerErrorMessage));
+          } else {
+            console.log("successful write request to firebase");
+            resolve(newTransaction);
+          }
+        });
+      } else {
+        const values = {
+          ['payment_id']: checkoutSession.payment_intent,
+          ['status']: checkoutSession.payment_status === "paid" ? "paid" : "pending",
+          ['amount']: checkoutSession.amount_total
+        };
+        eventRegRef.child('account').child('payments').child(existingTransactionKey).update(values, err => {
+          if (err) {
+            console.log("received error from firebase", err);
+            reject(createUserError(generalServerErrorMessage));
+          } else {
+            console.log("successful update request to firebase");
+            //replace created_at with actual server time
+            let transaction = Object.assign({}, existingTransaction, values);
+            resolve(transaction);
+          }
+        });
+      }
+    }),
+    new Promise((resolve, reject) => {      //update order
+      let transactionTime = null;
+      if (!!credit) {
+        transactionTime = get(registration, 'scholarship.created_at');
+      }
+      transactionTime ||= timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP;
+
+      if (!order.created_at) {
+        order.created_at = transactionTime;
+      }
+      if (get(promotions, 'roomUpgrade.available') || (get(registration, 'roomUpgrade.available') &&
+          moment(registration.roomUpgrade.timestamp).add(30, 'minutes').isAfter(moment(timestamp)))) {
+        order.roomUpgrade = true;
+      }
+
+      //discountCode
+      let discountCode = get(promotions, 'discountCode.name');
+      if (!!discountCode && !order.discountCode) {
+        order.discountCode = discountCode;
+      }
+      order.applyDiscountCode = null;
+      if (!!donationToStore) {
+        delete order.donation;
+      }
+
+      let values = {
+        order,
+        cart: null
+      };
+      if (!registration.created_at) {
+        values.created_at = transactionTime;
+      }
+      eventRegRef.update(values, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful update request to firebase");
+          //replace created_at with actual server time
+          let payment = Object.assign({}, values, {created_at: new Date().getTime()});
+          resolve(payment);
+        }
+      });
+    })
+  ];
+  if (!!donationToStore) {
+    promises.push(new Promise((resolve, reject) => {      //add donation object
+      let transaction = {
+        ['amount']: donationToStore,
+        ['created_at']: timestamp || firebaseAdmin.database.ServerValue.TIMESTAMP
+      };
+      eventRegRef.child('account').child('donations').push(transaction, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful write request to firebase");
+          resolve(transaction);
+        }
+      });
+    }));
+  }
+
+  return Promise.all(promises).then(([transaction, _ignore]) => transaction);
+}
+
+function recordCheckout(eventRegRef, checkoutSession, registration, promotions) {
+  console.log("recording checkout session initiation in firebase");
+  let order = Object.assign({}, registration.order, registration.cart);
+  let promises = [
+    new Promise((resolve, reject) => {      //add payment object
+      let transaction = {
+        ['status']: 'pending',
+        ['checkout_session_id']: checkoutSession.id,
+        ['payment_id']: checkoutSession.payment_intent,
+        ['amount']: checkoutSession.amount_total,
+        ['created_at']: firebaseAdmin.database.ServerValue.TIMESTAMP
+      };
+      eventRegRef.child('account').child('payments').push(transaction, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful write request to firebase");
+          resolve(transaction);
+        }
+      });
+    }),
+    new Promise((resolve, reject) => {      //update order
+      let transactionTime = firebaseAdmin.database.ServerValue.TIMESTAMP;
+
+      if (!order.created_at) {
+        order.created_at = transactionTime;
+      }
+      if (get(promotions, 'roomUpgrade.available') || (get(registration, 'roomUpgrade.available') &&
+          moment(registration.roomUpgrade.timestamp).add(30, 'minutes').isAfter(moment(timestamp)))) {
+        order.roomUpgrade = true;
+      }
+
+      //discountCode
+      let discountCode = get(promotions, 'discountCode.name');
+      if (!!discountCode && !order.discountCode) {
+        order.discountCode = discountCode;
+      }
+      order.applyDiscountCode = null;
+
+      let values = {
+        order,
+        cart: null
+      };
+      if (!registration.created_at) {
+        values.created_at = transactionTime;
+      }
+      eventRegRef.update(values, err => {
+        if (err) {
+          console.log("received error from firebase", err);
+          reject(createUserError(generalServerErrorMessage));
+        } else {
+          console.log("successful update request to firebase");
+          //replace created_at with actual server time
+          let payment = Object.assign({}, values, {created_at: new Date().getTime()});
+          resolve(payment);
+        }
+      });
+    })
+  ];
+
+  return Promise.all(promises).then(() => checkoutSession);
 }
 
 function updateOrder(eventRegRef, registration, values) {
@@ -1344,6 +1628,47 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
         });
       });
     }
+  });
+}
+
+function unregisterInMailchimp(firebase, uid, eventInfo, env) {
+  const db = firebase.database();
+  const userRef = db.ref('users').child(uid);
+  let memberHash;
+
+  //fetch user
+  return fetchRef(userRef)
+  .then(user => {
+    //calc memberHash
+    memberHash = crypto.createHash('md5').update(user.email.toLowerCase()).digest("hex");
+
+    //try update member
+    return new Promise((resolve, reject) => {
+      requestApi.patch({
+        url: env.mailchimp_list_url + '/members/' + memberHash,
+        json: true,
+        body: {
+          interests: {
+            [eventInfo.mailchimpGroupId]: false
+          }
+        },
+        auth: {
+          user: 'api',
+          pass: env.mailchimp_api_key
+        }
+      }, function optionalCallback(err, httpResponse, body) {
+        console.log("mailchimp update", {err, httpResponse, body});
+        if ((err && httpResponse.statusCode == 404) ||
+            (!err && get(body, "status", 0) == 404)) {
+          resolve({status: 'notfound', user});
+        } else if (err) {
+          console.log("Error received from mailchimp update member call", err);
+        } else {
+          console.log('Mailchimp update member successful');
+        }
+        resolve();
+      });
+    });
   });
 }
 
