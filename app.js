@@ -537,8 +537,8 @@ api.post("checkout", (request) => {
 
   //TODO validate inputs
 
-  return authenticateRequest(firebase, request.body.idToken, request.body.userid)
-  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request))
+  return (request.body.isAdmin ? authenticateAdminRequest : authenticateRequest)(firebase, request.body.idToken, request.body.userid)
+  .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request, request.body.isAdmin))
   .then(({ user }) => {
     return stripe.checkout.sessions.create({
       ui_mode: 'embedded',
@@ -659,7 +659,7 @@ function createUserError(userMessage, expected) {
   };
 }
 
-function authenticateRequest(firebase, idToken, uid, asAdmin) {
+function authenticateRequest(firebase, idToken, uid) {
   console.log("verifying id token with firebase");
   return firebase.auth().verifyIdToken(idToken)
   .then(decodedToken => {
@@ -702,7 +702,7 @@ function fetchUserData(firebase, eventid, userid) {
   ]).then(([event, registration]) => ({event, registration}));
 }
 
-function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request) {
+function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request, isAdmin) {
   console.log("validating registration state is valid for charge request");
   const db = firebase.database();
   const codesRef = db.ref('codes');
@@ -759,22 +759,24 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
           minimumPayment = balance;
         }
 
-        if (!order.acceptedTerms) {
-          console.log("terms and conditions not accepted");
-          reject(createUserError(generalServerErrorMessage));
-        } else if (eventInfo.acceptCovidPolicy && !order.acceptedCovidPolicy) {
-          console.log("covid policy not accepted");
-          reject(createUserError(generalServerErrorMessage));
-        } else if (isWaitlist) {
-          console.log("user on waitlist without place");
-          reject(createUserError(generalServerErrorMessage));
-        } else if (getAmountInCents(request) > balance) {
-          console.log("charge amount exceeds registration account balance");
-          reject(createUserError(generalServerErrorMessage));
-        } else if (getAmountInCents(request) < balance &&
-            getAmountInCents(request) < minimumPayment) {
-          console.log("charge amount below minimum payment amount");
-          reject(createUserError(generalServerErrorMessage));
+        if (!isAdmin) {
+          if (!order.acceptedTerms) {
+            console.log("terms and conditions not accepted");
+            reject(createUserError(generalServerErrorMessage));
+          } else if (eventInfo.acceptCovidPolicy && !order.acceptedCovidPolicy) {
+            console.log("covid policy not accepted");
+            reject(createUserError(generalServerErrorMessage));
+          } else if (isWaitlist) {
+            console.log("user on waitlist without place");
+            reject(createUserError(generalServerErrorMessage));
+          } else if (getAmountInCents(request) > balance) {
+            console.log("charge amount exceeds registration account balance");
+            reject(createUserError(generalServerErrorMessage));
+          } else if (getAmountInCents(request) < balance &&
+              getAmountInCents(request) < minimumPayment) {
+            console.log("charge amount below minimum payment amount");
+            reject(createUserError(generalServerErrorMessage));
+          }
         }
       } else {
         if (!!registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
