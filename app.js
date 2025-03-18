@@ -63,7 +63,7 @@ api.post("/charge", (request) => {
     if (isEarlyDeposit) {
       promises.push(recordEarlyDeposit(eventRegRef, charge, existingRegistration));
     } else {
-      promises.push(recordRegistrationPayment(eventRegRef, charge, null, existingRegistration, currentPromotions));
+      promises.push(recordRegistrationPayment_old(eventRegRef, charge, null, existingRegistration, currentPromotions));
       if (!get(existingRegistration, "order.created_at")) {
         promises.push(registerInMailchimp(firebase, request.body.userid, currentEventInfo, request.env));
       }
@@ -446,7 +446,7 @@ api.post("/recordExternalPayment", (request) => {
     }
     let timestamp = moment(request.body.paymentDate).valueOf();
     let promises = [
-      recordRegistrationPayment(eventRegRef, charge, credit, registration, promotions, timestamp)
+      recordRegistrationPayment_old(eventRegRef, charge, credit, registration, promotions, timestamp)
     ];
     if (!get(registration, "order.created_at")) {
       promises.push(registerInMailchimp(firebase, request.body.userid, eventInfo, request.env));
@@ -645,7 +645,7 @@ function fulfillCheckout(sessionId, stripe, firebase) {
         promotions.discountCode = validateDiscountCode(applyDiscountCode, eventInfo, user, codes);
       }
 
-      return recordRegistrationPayment_new(eventRegRef, checkoutSession, null, registration, promotions);
+      return recordRegistrationPayment(eventRegRef, checkoutSession, null, registration, promotions);
     });
   });
 }
@@ -901,7 +901,7 @@ function recordEarlyDeposit(eventRegRef, charge, registration) {
   });
 }
 
-function recordRegistrationPayment(eventRegRef, charge, credit, registration, promotions, timestamp) {
+function recordRegistrationPayment_old(eventRegRef, charge, credit, registration, promotions, timestamp) {
   console.log("recording registration payment in firebase");
   let order = Object.assign({}, registration.order, registration.cart);
   let donation = order.donation;
@@ -998,7 +998,7 @@ function recordRegistrationPayment(eventRegRef, charge, credit, registration, pr
   return Promise.all(promises).then(([transaction, _ignore]) => transaction);
 }
 
-function recordRegistrationPayment_new(eventRegRef, checkoutSession, credit, registration, promotions, timestamp) {
+function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registration, promotions, timestamp) {
   console.log("recording registration payment in firebase");
   let order = Object.assign({}, registration.order, registration.cart);
   let donationToStore = checkoutSession.payment_status === "paid" ? order.donation : null;
