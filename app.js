@@ -535,34 +535,49 @@ api.post("checkout", (request) => {
   const eventRegRef = db.ref(`event-registrations/${request.body.eventid}/${request.body.userid}`);
   const userRef = db.ref(`users/${request.body.userid}`);
 
+
+  const origin = request.normalizedHeaders['origin'];
+
   //TODO validate inputs
 
   return (request.body.isAdmin ? authenticateAdminRequest : authenticateRequest)(firebase, request.body.idToken, request.body.userid)
   .then(() => validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request, request.body.isAdmin))
-  .then(({ user }) => {
+  .then(({ registration, user }) => {
+    let line_items_info = [{
+      product: request.env.jmr_registration_stripe_product_id,
+      amount: getAmountInCents(request),
+    }];
+
+    let order = Object.assign({}, registration.order, registration.cart);
+    if (order.donation) {
+      line_items_info[0].amount -= order.donation;
+      line_items_info.push({
+        product: request.env.menschwork_donation_stripe_product_id,
+        amount: order.donation,
+      });
+    }
+
     return stripe.checkout.sessions.create({
       ui_mode: 'embedded',
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: 'JMR Registration',
-            },
-            unit_amount: getAmountInCents(request),
-          },
-          quantity: 1,
+      line_items: line_items_info.map(item => ({
+        price_data: {
+          currency: 'usd',
+          product: item.product,
+          unit_amount: item.amount,
         },
-      ],
+        quantity: 1,
+      })),
       mode: 'payment',
       customer_email: user.email.toLowerCase(),
       client_reference_id: `${request.body.eventid}:${request.body.userid}`,
       metadata: {
         eventid: request.body.eventid,
-        userid: request.body.userid
+        userid: request.body.userid,
+        isAdmin: request.body.isAdmin,
+        isNewRegistration: request.body.isNewRegistration,
       },
-      // return_url: `https://register.menschwork.org/return?session_id={CHECKOUT_SESSION_ID}`,
-      redirect_on_completion: 'never',
+      return_url: `${origin}/callback?session_id={CHECKOUT_SESSION_ID}`,
+      redirect_on_completion: 'always',
     });
   })
   .then((session) => {
@@ -571,7 +586,6 @@ api.post("checkout", (request) => {
     };
   })
   .catch(err => {
-    console.log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -616,8 +630,6 @@ function fulfillCheckout(sessionId, stripe, firebase) {
     expand: ['line_items'],
   })
   .then((checkoutSession) => {
-    console.log('retrieved checkout session:', checkoutSession);
-
     // fetch event and registration data from firebase
     const db = firebase.database();
     const { eventid, userid } = checkoutSession.metadata;
@@ -637,6 +649,40 @@ function fulfillCheckout(sessionId, stripe, firebase) {
     });
   });
 }
+
+api.get("checkoutSession", (request) => {
+  console.log("GET /checkoutSession: ", request.queryString);
+  const stripe = stripeApi(request.env.stripe_secret_api_key);
+  const firebase = initFirebase(request);
+
+  let currentAuthUser;
+
+  return authenticateRequest(firebase, request.queryString.idToken)
+  .then(uid => firebase.auth().getUser(uid))
+  .then(user => {
+    currentAuthUser = user;
+    return stripe.checkout.sessions.retrieve(request.queryString.session_id);
+  })
+  .then((checkoutSession) => {
+    const { eventid, userid, isAdmin, isNewRegistration } = checkoutSession.metadata;
+
+    // validate user auth
+    if (currentAuthUser.uid !== userid) {
+      if (isAdmin !== 'true' || !currentAuthUser.customClaims.admin) {
+        throw createUserError("You are not authorized to view this session");
+      }
+    }
+
+    return {
+      status: checkoutSession.status,
+      payment_status: checkoutSession.payment_status,
+      eventid,
+      userid,
+      isAdmin,
+      isNewRegistration
+    };
+  });
+});
 
 function initFirebase(request) {
   let app = firebaseAppCache[request.env.lambdaVersion];
