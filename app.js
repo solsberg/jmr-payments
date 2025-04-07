@@ -612,13 +612,13 @@ api.post("stripe_payments_webhook", (request) => {
   // }
   // console.log("webhook event:", event)
 
-  return fulfillCheckout(event.data.object.id, stripe, firebase).then(() => {
+  return fulfillCheckout(event.data.object.id, stripe, firebase, request.env).then(() => {
     // Return a response to acknowledge receipt of the event
     return { received: true };
   });
 });
 
-function fulfillCheckout(sessionId, stripe, firebase) {
+function fulfillCheckout(sessionId, stripe, firebase, env) {
   // TODO: Make this function safe to run multiple times,
   // even concurrently, with the same session ID
 
@@ -634,11 +634,13 @@ function fulfillCheckout(sessionId, stripe, firebase) {
     const db = firebase.database();
     const { eventid, userid } = checkoutSession.metadata;
     const eventRegRef = db.ref(`event-registrations/${eventid}/${userid}`);
+    const eventRef = db.ref(`events/${eventid}`);
 
     return Promise.all([
       fetchRef(eventRegRef),
+      fetchRef(eventRef),
       fetchPromotionsStatus(firebase, eventid, userid),
-    ]).then(([registration, promotions]) => {
+    ]).then(([registration, eventInfo, promotions]) => {
       //discountCode
       const applyDiscountCode = get(registration, "cart.applyDiscountCode");
       if (!!applyDiscountCode && !get(registration, "order.discountCode")) {
@@ -649,7 +651,7 @@ function fulfillCheckout(sessionId, stripe, firebase) {
         recordRegistrationPayment(eventRegRef, checkoutSession, null, registration, promotions)
       ];
       if (!get(registration, "order.created_at")) {
-        promises.push(registerInMailchimp(firebase, request.body.userid, currentEventInfo, request.env));
+        promises.push(registerInMailchimp(firebase, userid, eventInfo, env));
       }
       return Promise.all(promises).then(([payment]) => payment);
     });
@@ -1605,6 +1607,7 @@ function isRegistered(reg) {
 }
 
 function registerInMailchimp(firebase, uid, eventInfo, env) {
+  console.log("adding new registration to mailchimp");
   const db = firebase.database();
   const userRef = db.ref('users').child(uid);
   let memberHash;
