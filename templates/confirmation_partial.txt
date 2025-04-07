@@ -13,5 +13,5 @@ In brotherhood,
 
 The %%event_title%% Co-Chairs
    David Piver
-   Gabe Silver
+   Gabi Silver
    Ralph Benmergui

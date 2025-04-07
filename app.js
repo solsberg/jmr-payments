@@ -645,7 +645,13 @@ function fulfillCheckout(sessionId, stripe, firebase) {
         promotions.discountCode = validateDiscountCode(applyDiscountCode, eventInfo, user, codes);
       }
 
-      return recordRegistrationPayment(eventRegRef, checkoutSession, null, registration, promotions);
+      let promises = [
+        recordRegistrationPayment(eventRegRef, checkoutSession, null, registration, promotions)
+      ];
+      if (!get(registration, "order.created_at")) {
+        promises.push(registerInMailchimp(firebase, request.body.userid, currentEventInfo, request.env));
+      }
+      return Promise.all(promises).then(([payment]) => payment);
     });
   });
 }
