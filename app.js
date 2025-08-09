@@ -100,7 +100,7 @@ function sendTemplateEmail(template, params, env) {
 
   let formData = {
     from: params.from || DEFAULT_FROM_ADDRESS,
-    to: params.to || env.admin_to_address || DEFAULT_TO_ADDRESS,
+    to: params.to || env.admin_override_to_address || DEFAULT_TO_ADDRESS,
     subject: params.subject || DEFAULT_SUBJECT
   };
 
@@ -1422,7 +1422,7 @@ function sendAdminEmail(values, env) {
 
   let formData = {
     from: values.from || DEFAULT_FROM_ADDRESS,
-    to: values.to || env.admin_to_address || DEFAULT_TO_ADDRESS,
+    to: env.admin_override_to_address || values.to || DEFAULT_TO_ADDRESS,
     subject: values.subject || DEFAULT_SUBJECT,
     text: values.text
   };
