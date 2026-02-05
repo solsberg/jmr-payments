@@ -633,6 +633,12 @@ function fulfillCheckout(sessionId, stripe, firebase, env) {
     // fetch event and registration data from firebase
     const db = firebase.database();
     const { eventid, userid } = checkoutSession.metadata;
+
+    if (!eventid) {
+      // not a JMR reg payment
+      return Promise.resolve();
+    }
+
     const eventRegRef = db.ref(`event-registrations/${eventid}/${userid}`);
     const eventRef = db.ref(`events/${eventid}`);
 
