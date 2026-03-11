@@ -7,6 +7,7 @@ const ApiBuilder = require('claudia-api-builder'),
       fs = require('fs'),
       get = require('lodash/get'),
       has = require('lodash/has'),
+      pick = require('lodash/pick'),
       crypto = require('crypto');
 
 AWS.config.update({region: 'us-east-1'});
@@ -28,6 +29,9 @@ api.corsOrigin((request) => {
 });
 
 api.corsMaxAge(300); // in seconds
+
+const inMemoryCache = {};
+const CACHE_TTL = 30 * 1000;
 
 //endpoints
 
@@ -600,7 +604,6 @@ api.post("stripe_payments_webhook", (request) => {
   const db = firebase.database();
 
   const payload = request.rawBody;
-  const sig = request.normalizedHeaders['stripe-signature'];
 
   let event = stripe.webhooks.constructEvent(payload, sig, request.env.stripe_payments_webhook_secret);
 
@@ -694,6 +697,87 @@ api.get("checkoutSession", (request) => {
       userid,
       isAdmin,
       isNewRegistration
+    };
+  });
+});
+
+api.post("authenticate", (request) => {
+  console.log("POST /authenticate: ", request.body);
+  const firebase = initFirebase(request);
+
+  const db = firebase.database();
+  const usersRef = db.ref('users');
+
+  // authenticate API token
+  const authHeader = request.normalizedHeaders['Authorization'] || request.normalizedHeaders['authorization'];
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return new api.ApiResponse("missing or invalid Authorization header", {'Content-Type': 'application/json'}, 401);
+  }
+  const apiToken = authHeader.split(" ")[1];
+  if (apiToken != request.env.wordpress_api_token) {
+    return new api.ApiResponse("invalid API token", {'Content-Type': 'application/json'}, 401);
+  }
+
+  // lookup existing user
+  const email = request.body.email.toLowerCase();
+
+  let profile = pick(request.body.profile || {}, ['first_name', 'last_name', 'phone', 'address_1', 'address_2', 'city', 'state', 'post_code']);
+
+  return fetchRef(usersRef)
+  .then(users => {
+    let usersArray = firebaseArrayElements(users);
+
+    const user = usersArray.find(user => user.email.toLowerCase() === email);
+    if (!user) {
+      console.log("no user found with email, creating new user");
+      return firebase.auth().createUser({
+        email,
+        password: crypto.randomBytes(16).toString('hex'),
+        disabled: false,
+      })
+      .then((userRecord) => {
+        console.log("user created with uid", userRecord.uid);
+        let userData = {
+          uid: userRecord.uid,
+          email,
+          profile,
+          created_at: firebaseAdmin.database.ServerValue.TIMESTAMP
+        };
+        return usersRef.child(userRecord.uid).set(userData).then(() => userData);
+      });
+    } else {
+      console.log("user found with email, uid:", user.uid);
+      let changes = false;
+      for (const [key, value] of Object.entries(profile)) {
+        if (user.profile[key] !== value) {
+          changes = true;
+        }
+      }
+      if (changes) {
+        let userRef = usersRef.child(user.uid);
+        return userRef.child('profile').update(profile)
+        .then(() => {
+          return fetchRef(userRef);
+        });
+      }
+      else {
+        return Promise.resolve(user);
+      }
+    }
+  }).then(user => {
+    return firebase.auth().createCustomToken(user.uid);
+  }).then(token => {
+    let shortCode;
+    do {
+      shortCode = crypto.randomBytes(4).toString('hex');
+    } while (inMemoryCache[shortCode]);
+    inMemoryCache[shortCode] = {
+      data: token,
+      timestamp: Date.now()
+    };
+    return {
+      short_code: shortCode,
+      token
     };
   });
 });
