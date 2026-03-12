@@ -37,7 +37,7 @@ api.corsMaxAge(300); // in seconds
 
 // const inMemoryCache = {};
 const DYNAMO_DB_TABLE_NAME = 'jmr-payments-token-cache';
-const CACHE_TTL = 300 * 1000;
+const CACHE_TTL = 30 * 1000;
 
 //endpoints
 
@@ -789,8 +789,7 @@ api.post("authenticate", (request) => {
     return dynamoDBDocClient.send(command)
     .then(() => {
       return {
-        short_code: shortCode,
-        token
+        short_code: shortCode
       };
     });
   });
