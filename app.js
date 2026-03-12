@@ -3,6 +3,8 @@ const ApiBuilder = require('claudia-api-builder'),
       firebaseAdmin = require('firebase-admin'),
       requestApi = require('request'),
       AWS = require('aws-sdk'),
+      { DynamoDBClient } = require("@aws-sdk/client-dynamodb"),
+      { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb"),
       moment = require('moment'),
       fs = require('fs'),
       get = require('lodash/get'),
@@ -15,6 +17,9 @@ AWS.config.update({region: 'us-east-1'});
 const api = new ApiBuilder();
 module.exports = api;
 let firebaseAppCache = {};
+
+const dynamoDBClient = new DynamoDBClient({ region: 'us-east-1' });
+const dynamoDBDocClient = DynamoDBDocumentClient.from(dynamoDBClient);
 
 const generalServerErrorMessage = "There was a problem with the payment processor. " +
   "Please contact registration@menschwork.org for help.";
@@ -30,8 +35,9 @@ api.corsOrigin((request) => {
 
 api.corsMaxAge(300); // in seconds
 
-const inMemoryCache = {};
-const CACHE_TTL = 30 * 1000;
+// const inMemoryCache = {};
+const DYNAMO_DB_TABLE_NAME = 'jmr-payments-token-cache';
+const CACHE_TTL = 300 * 1000;
 
 //endpoints
 
@@ -767,19 +773,72 @@ api.post("authenticate", (request) => {
   }).then(user => {
     return firebase.auth().createCustomToken(user.uid);
   }).then(token => {
-    let shortCode;
-    do {
-      shortCode = crypto.randomBytes(4).toString('hex');
-    } while (inMemoryCache[shortCode]);
-    inMemoryCache[shortCode] = {
-      data: token,
-      timestamp: Date.now()
-    };
-    return {
-      short_code: shortCode,
-      token
-    };
+    // let shortCode;
+    // do {
+    //   shortCode = crypto.randomBytes(4).toString('hex');
+    // } while (inMemoryCache[shortCode]);
+    const shortCode = crypto.randomBytes(4).toString('hex');
+    const command = new PutCommand({
+      TableName: DYNAMO_DB_TABLE_NAME,
+      Item: {
+        short_code: shortCode,
+        token,
+        timestamp: Date.now()
+      }
+    });
+    return dynamoDBDocClient.send(command)
+    .then(() => {
+      return {
+        short_code: shortCode,
+        token
+      };
+    });
   });
+});
+
+api.get("/fetchToken", (request) => {
+  console.log("GET /fetchToken: ", request.queryString);
+
+  const shortCode = request.queryString.short_code;
+  if (!shortCode) {
+    throw "missing query string parameter: short_code";
+  }
+
+  const command = new GetCommand({
+    TableName: DYNAMO_DB_TABLE_NAME,
+    Key: {
+      short_code: shortCode
+    }
+  });
+  return dynamoDBDocClient.send(command)
+  .then(({ Item }) => {
+    if (!Item || (Date.now() - Item.timestamp) >= CACHE_TTL) {
+      throw "invalid or expired short_code";
+    }
+
+    const deleteCommand = new DeleteCommand({
+      TableName: DYNAMO_DB_TABLE_NAME,
+      Key: {
+        short_code: shortCode
+      }
+    });
+    return dynamoDBClient.send(deleteCommand)
+    .then(() => {
+      return {
+        token: Item.token
+      };
+    });
+  });
+
+  // const tokenData = inMemoryCache[shortCode];
+  // if (!tokenData || (Date.now() - tokenData.timestamp) >= CACHE_TTL) {
+  //   throw "invalid or expired short_code";
+  // }
+
+  // delete inMemoryCache[shortCode];
+  // return {
+  //   token: tokenData.data
+  // };
 });
 
 function initFirebase(request) {
