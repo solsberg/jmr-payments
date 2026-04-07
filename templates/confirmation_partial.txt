@@ -12,6 +12,5 @@ We look forward to seeing you in October.
 In brotherhood,
 
 The %%event_title%% Co-Chairs
-   David Piver
-   Gabi Silver
-   Ralph Benmergui
+   Rob Kaim
+   Simon Olsberg
