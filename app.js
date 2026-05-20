@@ -43,7 +43,7 @@ const EXPIRY_DAYS = 7;
 //endpoints
 
 api.post("/charge", (request) => {
-  console.log("POST /charge: ", request.body);
+  log("POST /charge: ", request.body);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
   const firebase = initFirebase(request);
 
@@ -83,7 +83,7 @@ api.post("/charge", (request) => {
   })
   .then(([_ignore, payment]) => payment)
   .catch(err => {
-    console.log(err);
+    log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -92,12 +92,12 @@ api.post("/charge", (request) => {
 });
 
 api.post("/adminEmail", (request) => {
-  console.log("POST /adminEmail: ", request.body);
+  log("POST /adminEmail: ", request.body);
   return sendAdminEmail(request.body, request.env);
 });
 
 api.post("/templateEmail", (request) => {
-  console.log("POST /templateEmail: ", request.body);
+  log("POST /templateEmail: ", request.body);
 
   return sendTemplateEmail(request.body.template, request.body, request.env);
 });
@@ -157,10 +157,10 @@ function sendTemplateEmail(template, params, env) {
         }
       }, function optionalCallback(err, httpResponse, body) {
         if (err) {
-          console.log("Error received from mailgun", err);
+          log("Error received from mailgun", err);
           reject(err);
         } else {
-          console.log('Email sent successfully');
+          log('Email sent successfully');
           resolve();
         }
       });
@@ -172,7 +172,7 @@ function sendTemplateEmail(template, params, env) {
 }
 
 api.get("/importedProfile", (request) => {
-  console.log("GET /importedProfile: ", request.queryString);
+  log("GET /importedProfile: ", request.queryString);
   const firebase = initFirebase(request);
 
   const email = request.queryString.email.toLowerCase();
@@ -193,7 +193,7 @@ api.get("/importedProfile", (request) => {
 
 //sends a backup of firebase data to S3 once daily
 api.post("/init", (request) => {
-  console.log("POST /init");
+  log("POST /init");
 
   const BUCKET_NAME = 'jmr-payments-backup';
   const firebase = initFirebase(request);
@@ -220,23 +220,23 @@ api.post("/init", (request) => {
         if (err.code === 'NotFound') {
           //only create if key does not yet exist
           const ref = firebase.database().ref();
-          console.log("fetching data");
+          log("fetching data");
           ref.once('value')
           .then((snapshot) => {
             const data = snapshot.val();
             const json = JSON.stringify(data);
-            console.log("storing data");
+            log("storing data");
             s3.putObject(Object.assign({}, keyParams, {Body: json}), (err) => {
               if (err) {
-                console.log("storing data error", err);
+                log("storing data error", err);
               } else {
-                console.log("storing data successful");
+                log("storing data successful");
               }
               resolve(serverInfo);
             });
           });
         } else {
-          console.log("headObject error", err);
+          log("headObject error", err);
           resolve(serverInfo);
         }
       } else {
@@ -247,7 +247,7 @@ api.post("/init", (request) => {
 });
 
 api.post("/updateOrder", (request) => {
-  console.log("POST /updateOrder: ", request.body);
+  log("POST /updateOrder: ", request.body);
   const firebase = initFirebase(request);
 
   const db = firebase.database();
@@ -286,7 +286,7 @@ api.post("/updateOrder", (request) => {
   })
   .then(() => "OK")
   .catch(err => {
-    console.log(err);
+    log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -295,7 +295,7 @@ api.post("/updateOrder", (request) => {
 });
 
 api.get('/promotions', (request) => {
-  console.log("GET /promotions: ", request.queryString);
+  log("GET /promotions: ", request.queryString);
   const firebase = initFirebase(request);
 
   return authenticateRequest(firebase, request.queryString.idToken, request.queryString.userid)
@@ -303,7 +303,7 @@ api.get('/promotions', (request) => {
 });
 
 api.get('/bambam', (request) => {
-  console.log("GET /bambam: ", request.queryString);
+  log("GET /bambam: ", request.queryString);
   const firebase = initFirebase(request);
 
   return authenticateRequest(firebase, request.queryString.idToken, request.queryString.userid)
@@ -312,14 +312,14 @@ api.get('/bambam', (request) => {
 });
 
 api.get('/roomUpgrade', (request) => {
-  console.log("GET /roomUpgrade: ", request.queryString);
+  log("GET /roomUpgrade: ", request.queryString);
   const firebase = initFirebase(request);
 
   return fetchRoomUpgradeStatus(firebase, request.queryString.eventid);
 });
 
 api.post('/bambam', (request) => {
-  console.log("POST /bambam: ", request.body);
+  log("POST /bambam: ", request.body);
   const firebase = initFirebase(request);
 
   const db = firebase.database();
@@ -419,7 +419,7 @@ api.post('/bambam', (request) => {
   }).then(() => {
     return responseMessages.length > 0 ? responseMessages : undefined;
   }).catch(err => {
-    console.log(err);
+    log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -428,7 +428,7 @@ api.post('/bambam', (request) => {
 });
 
 api.post("/recordExternalPayment", (request) => {
-  console.log("POST /recordExternalPayment: ", request.body);
+  log("POST /recordExternalPayment: ", request.body);
   const firebase = initFirebase(request);
 
   const db = firebase.database();
@@ -466,7 +466,7 @@ api.post("/recordExternalPayment", (request) => {
   })
   .then(([payment]) => payment)
   .catch(err => {
-    console.log(err);
+    log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -475,7 +475,7 @@ api.post("/recordExternalPayment", (request) => {
 });
 
 api.post("/cancelRegistration", (request) => {
-  console.log("POST /cancelRegistration: ", request.body);
+  log("POST /cancelRegistration: ", request.body);
   const firebase = initFirebase(request);
 
   const db = firebase.database();
@@ -491,10 +491,10 @@ api.post("/cancelRegistration", (request) => {
       new Promise((resolve, reject) => {
         eventRegRef.child('order').update({ cancelled: true }, err => {
           if (err) {
-            console.log("received error from firebase", err);
+            log("received error from firebase", err);
             reject(createUserError(generalServerErrorMessage));
           } else {
-            console.log("successful update request to firebase");
+            log("successful update request to firebase");
             resolve(true);
           }
         });
@@ -503,7 +503,7 @@ api.post("/cancelRegistration", (request) => {
     ]);
   })
   .catch(err => {
-    console.log(err);
+    log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -512,7 +512,7 @@ api.post("/cancelRegistration", (request) => {
 });
 
 api.post("validateCode", (request) => {
-  console.log("POST /validateCode: ", request.body);
+  log("POST /validateCode: ", request.body);
   const firebase = initFirebase(request);
 
   const db = firebase.database();
@@ -527,7 +527,7 @@ api.post("validateCode", (request) => {
     fetchRef(userRef)
   ])).then(([eventInfo, codes, user]) => validateDiscountCode(request.body.code, eventInfo, user, codes))
   .catch(err => {
-    console.log(err);
+    log(err);
     if (err instanceof Object && !(err instanceof Error)) {
       return new api.ApiResponse(err, {'Content-Type': 'application/json'}, err.expected ? 403 : 500);
     }
@@ -537,7 +537,7 @@ api.post("validateCode", (request) => {
 });
 
 api.post("checkout", (request) => {
-  console.log("POST /checkout: ", request.body);
+  log("POST /checkout: ", request.body);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
   const firebase = initFirebase(request);
 
@@ -605,7 +605,7 @@ api.post("checkout", (request) => {
 });
 
 api.post("stripe_payments_webhook", (request) => {
-  console.log("POST /stripe_payments_webhook: ", request.body);
+  log("POST /stripe_payments_webhook: ", request.body);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
   const firebase = initFirebase(request);
   const db = firebase.database();
@@ -620,7 +620,7 @@ api.post("stripe_payments_webhook", (request) => {
   // ) {
   //   fulfillCheckout(event.data.object.id);
   // }
-  // console.log("webhook event:", event)
+  // log("webhook event:", event)
 
   return fulfillCheckout(event.data.object.id, stripe, firebase, request.env).then(() => {
     // Return a response to acknowledge receipt of the event
@@ -675,7 +675,7 @@ function fulfillCheckout(sessionId, stripe, firebase, env) {
 }
 
 api.get("checkoutSession", (request) => {
-  console.log("GET /checkoutSession: ", request.queryString);
+  log("GET /checkoutSession: ", request.queryString);
   const stripe = stripeApi(request.env.stripe_secret_api_key);
   const firebase = initFirebase(request);
 
@@ -709,7 +709,7 @@ api.get("checkoutSession", (request) => {
 });
 
 api.post("authenticate", (request) => {
-  console.log("POST /authenticate: ", request.body);
+  log("POST /authenticate: ", request.body);
   const firebase = initFirebase(request);
 
   const db = firebase.database();
@@ -736,14 +736,14 @@ api.post("authenticate", (request) => {
 
     const user = usersArray.find(user => user.email.toLowerCase() === email);
     if (!user) {
-      console.log("no user found with email, creating new user");
+      log("no user found with email, creating new user");
       return firebase.auth().createUser({
         email,
         password: crypto.randomBytes(16).toString('hex'),
         disabled: false,
       })
       .then((userRecord) => {
-        console.log("user created with uid", userRecord.uid);
+        log("user created with uid", userRecord.uid);
         let userData = {
           uid: userRecord.uid,
           email,
@@ -753,7 +753,7 @@ api.post("authenticate", (request) => {
         return usersRef.child(userRecord.uid).set(userData).then(() => userData);
       });
     } else {
-      console.log("user found with email, uid:", user.uid);
+      log("user found with email, uid:", user.uid);
       let changes = false;
       for (const [key, value] of Object.entries(profile)) {
         if (user.profile[key] !== value) {
@@ -798,7 +798,7 @@ api.post("authenticate", (request) => {
 });
 
 api.get("/fetchToken", (request) => {
-  console.log("GET /fetchToken: ", request.queryString);
+  log("GET /fetchToken: ", request.queryString);
 
   const shortCode = request.queryString.short_code;
   if (!shortCode) {
@@ -864,11 +864,11 @@ function createUserError(userMessage, expected) {
 }
 
 function authenticateRequest(firebase, idToken, uid) {
-  console.log("verifying id token with firebase");
+  log("verifying id token with firebase");
   return firebase.auth().verifyIdToken(idToken)
   .then(decodedToken => {
     if (!!uid && decodedToken.uid !== uid) {
-      console.log("userid in request does not match id token");
+      log("userid in request does not match id token");
       throw createUserError(generalServerErrorMessage);
     }
     return decodedToken.uid;
@@ -876,14 +876,14 @@ function authenticateRequest(firebase, idToken, uid) {
 }
 
 function authenticateAdminRequest(firebase, idToken) {
-  console.log("verifying id token with firebase");
+  log("verifying id token with firebase");
   return firebase.auth().verifyIdToken(idToken)
   .then(decodedToken => firebase.auth().getUser(decodedToken.uid))
   .then(user => {
     if (user.customClaims.admin) {
       return user.uid;
     } else {
-      console.log("userid in request is not an admin");
+      log("userid in request is not an admin");
       throw createUserError(generalServerErrorMessage);
     }
   });
@@ -894,7 +894,7 @@ function fetchRef(ref) {
 }
 
 function fetchUserData(firebase, eventid, userid) {
-  console.log("fetching base user registration data");
+  log("fetching base user registration data");
 
   const db = firebase.database();
   const eventRef = db.ref(`events/${eventid}`);
@@ -907,7 +907,7 @@ function fetchUserData(firebase, eventid, userid) {
 }
 
 function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, request, isAdmin) {
-  console.log("validating registration state is valid for charge request");
+  log("validating registration state is valid for charge request");
   const db = firebase.database();
   const codesRef = db.ref('codes');
 
@@ -918,9 +918,9 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
     fetchPromotionsStatus(firebase, eventRef.key, eventRegRef.key),
     fetchRef(codesRef)
   ]).then(([eventInfo, registration, user, promotions, codes]) => {
-    console.log("validateRegistrationState: eventInfo", eventInfo);
-    console.log("validateRegistrationState: registration", registration);
-    console.log("validateRegistrationState: request", request);
+    log("validateRegistrationState: eventInfo", eventInfo);
+    log("validateRegistrationState: registration", registration);
+    log("validateRegistrationState: request", request);
     registration = registration || {};
 
     //discountCode
@@ -933,15 +933,15 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
       if (!request.body.paymentType) {
         //updateOrder request
         if (!registration.order) {
-          console.log("no existing order found");
+          log("no existing order found");
           reject(createUserError(generalServerErrorMessage));
         } else if (!registration.account || !registration.account.payments) {
-          console.log("no previous payment found");
+          log("no previous payment found");
           reject(createUserError(generalServerErrorMessage));
         }
       } else if (request.body.paymentType === 'REGISTRATION') {
         const balance = calculateBalance(eventInfo, registration, user, promotions);
-        console.log("balance", balance);
+        log("balance", balance);
         let order = Object.assign({}, registration.order, registration.cart);
         const isWaitlist = !has(order, 'created_at') && eventInfo.status == 'WAITLIST' && !order.allowWaitlist;
         const isNewRegistration = !registration.order;
@@ -965,30 +965,30 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
 
         if (!isAdmin) {
           if (!order.acceptedTerms) {
-            console.log("terms and conditions not accepted");
+            log("terms and conditions not accepted");
             reject(createUserError(generalServerErrorMessage));
           } else if (eventInfo.acceptCovidPolicy && !order.acceptedCovidPolicy) {
-            console.log("covid policy not accepted");
+            log("covid policy not accepted");
             reject(createUserError(generalServerErrorMessage));
           } else if (isWaitlist) {
-            console.log("user on waitlist without place");
+            log("user on waitlist without place");
             reject(createUserError(generalServerErrorMessage));
           } else if (getAmountInCents(request) > balance) {
-            console.log("charge amount exceeds registration account balance");
+            log("charge amount exceeds registration account balance");
             reject(createUserError(generalServerErrorMessage));
           } else if (getAmountInCents(request) < balance &&
               getAmountInCents(request) < minimumPayment) {
-            console.log("charge amount below minimum payment amount");
+            log("charge amount below minimum payment amount");
             reject(createUserError(generalServerErrorMessage));
           }
         }
       } else {
         if (!!registration.earlyDeposit && registration.earlyDeposit.status === 'paid') {
-          console.log("early deposit payment already recorded for this registration");
+          log("early deposit payment already recorded for this registration");
           reject(createUserError(generalServerErrorMessage));
         }
         if (getAmountInCents(request) !== 3600) {
-          console.log("invalid early deposit payment amount: " + getAmountInCents(request));
+          log("invalid early deposit payment amount: " + getAmountInCents(request));
           reject(createUserError(generalServerErrorMessage));
         }
       }
@@ -998,7 +998,7 @@ function validateRegistrationState(firebase, eventRef, eventRegRef, userRef, req
 }
 
 function createCharge(stripe, request) {
-  console.log("sending charge request to stripe");
+  log("sending charge request to stripe");
   return new Promise((resolve, reject) => {
     stripe.charges.create({
       amount: getAmountInCents(request),
@@ -1007,14 +1007,14 @@ function createCharge(stripe, request) {
       description: request.body.description
     }, function(err, charge) {
       if (err) {
-        console.log("received error from stripe", err);
+        log("received error from stripe", err);
         if (err.type === 'StripeCardError') {
           reject(createUserError("There was a problem charging your card: " + err.message, true));
         } else {
           reject(createUserError(generalServerErrorMessage));
         }
       } else {
-        console.log("successful charge request to stripe");
+        log("successful charge request to stripe");
         resolve(charge);
       }
     });
@@ -1022,14 +1022,14 @@ function createCharge(stripe, request) {
 }
 
 function saveChargeData(eventRegRef, charge) {
-  console.log("writing charge to firebase");
+  log("writing charge to firebase");
   return new Promise((resolve, reject) => {
     eventRegRef.child('transactions').push({charge}, err => {
       if (err) {
-        console.log("received error from firebase", err);
+        log("received error from firebase", err);
         reject(createUserError(generalServerErrorMessage));
       } else {
-        console.log("successful write request to firebase");
+        log("successful write request to firebase");
         resolve();
       }
     });
@@ -1037,7 +1037,7 @@ function saveChargeData(eventRegRef, charge) {
 }
 
 function recordEarlyDeposit(eventRegRef, charge, registration) {
-  console.log("updating registration for early deposit in firebase");
+  log("updating registration for early deposit in firebase");
   let values = {
     ['earlyDeposit/status']: 'paid',
     ['earlyDeposit/charge']: charge.id,
@@ -1049,10 +1049,10 @@ function recordEarlyDeposit(eventRegRef, charge, registration) {
   return new Promise((resolve, reject) => {
     eventRegRef.update(values, err => {
       if (err) {
-        console.log("received error from firebase", err);
+        log("received error from firebase", err);
         reject(createUserError(generalServerErrorMessage));
       } else {
-        console.log("successful update request to firebase");
+        log("successful update request to firebase");
         resolve(values);
       }
     });
@@ -1060,7 +1060,7 @@ function recordEarlyDeposit(eventRegRef, charge, registration) {
 }
 
 function recordRegistrationPayment_old(eventRegRef, charge, credit, registration, promotions, timestamp) {
-  console.log("recording registration payment in firebase");
+  log("recording registration payment in firebase");
   let order = Object.assign({}, registration.order, registration.cart);
   let donation = order.donation;
   let promises = [
@@ -1084,10 +1084,10 @@ function recordRegistrationPayment_old(eventRegRef, charge, credit, registration
       }
       collectionRef.push(transaction, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful write request to firebase");
+          log("successful write request to firebase");
           resolve(transaction);
         }
       });
@@ -1124,10 +1124,10 @@ function recordRegistrationPayment_old(eventRegRef, charge, credit, registration
       }
       eventRegRef.update(values, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful update request to firebase");
+          log("successful update request to firebase");
           //replace created_at with actual server time
           let payment = Object.assign({}, values, {created_at: new Date().getTime()});
           resolve(payment);
@@ -1143,10 +1143,10 @@ function recordRegistrationPayment_old(eventRegRef, charge, credit, registration
       };
       eventRegRef.child('account').child('donations').push(transaction, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful write request to firebase");
+          log("successful write request to firebase");
           resolve(transaction);
         }
       });
@@ -1157,7 +1157,7 @@ function recordRegistrationPayment_old(eventRegRef, charge, credit, registration
 }
 
 function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registration, promotions, timestamp) {
-  console.log("recording registration payment in firebase");
+  log("recording registration payment in firebase");
   let order = Object.assign({}, registration.order, registration.cart);
   let donationToStore = checkoutSession.payment_status === "paid" ? order.donation : null;
   let promises = [
@@ -1192,10 +1192,10 @@ function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registr
       if (newTransaction) {
         collectionRef.push(newTransaction, err => {
           if (err) {
-            console.log("received error from firebase", err);
+            log("received error from firebase", err);
             reject(createUserError(generalServerErrorMessage));
           } else {
-            console.log("successful write request to firebase");
+            log("successful write request to firebase");
             resolve(newTransaction);
           }
         });
@@ -1207,10 +1207,10 @@ function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registr
         };
         eventRegRef.child('account').child('payments').child(existingTransactionKey).update(values, err => {
           if (err) {
-            console.log("received error from firebase", err);
+            log("received error from firebase", err);
             reject(createUserError(generalServerErrorMessage));
           } else {
-            console.log("successful update request to firebase");
+            log("successful update request to firebase");
             //replace created_at with actual server time
             let transaction = Object.assign({}, existingTransaction, values);
             resolve(transaction);
@@ -1252,10 +1252,10 @@ function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registr
       }
       eventRegRef.update(values, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful update request to firebase");
+          log("successful update request to firebase");
           //replace created_at with actual server time
           let payment = Object.assign({}, values, {created_at: new Date().getTime()});
           resolve(payment);
@@ -1271,10 +1271,10 @@ function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registr
       };
       eventRegRef.child('account').child('donations').push(transaction, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful write request to firebase");
+          log("successful write request to firebase");
           resolve(transaction);
         }
       });
@@ -1285,7 +1285,7 @@ function recordRegistrationPayment(eventRegRef, checkoutSession, credit, registr
 }
 
 function recordCheckout(eventRegRef, checkoutSession, registration, promotions) {
-  console.log("recording checkout session initiation in firebase");
+  log("recording checkout session initiation in firebase");
   let order = Object.assign({}, registration.order, registration.cart);
   let promises = [
     new Promise((resolve, reject) => {      //add payment object
@@ -1298,10 +1298,10 @@ function recordCheckout(eventRegRef, checkoutSession, registration, promotions) 
       };
       eventRegRef.child('account').child('payments').push(transaction, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful write request to firebase");
+          log("successful write request to firebase");
           resolve(transaction);
         }
       });
@@ -1333,10 +1333,10 @@ function recordCheckout(eventRegRef, checkoutSession, registration, promotions) 
       }
       eventRegRef.update(values, err => {
         if (err) {
-          console.log("received error from firebase", err);
+          log("received error from firebase", err);
           reject(createUserError(generalServerErrorMessage));
         } else {
-          console.log("successful update request to firebase");
+          log("successful update request to firebase");
           //replace created_at with actual server time
           let payment = Object.assign({}, values, {created_at: new Date().getTime()});
           resolve(payment);
@@ -1349,12 +1349,12 @@ function recordCheckout(eventRegRef, checkoutSession, registration, promotions) 
 }
 
 function updateOrder(eventRegRef, registration, values) {
-  console.log("updating order in firebase");
+  log("updating order in firebase");
   let order = Object.assign({}, registration.order, values);
   return eventRegRef.child("order").set(order)
   .then(() => order)
   .catch(err => {
-    console.log("received error from firebase", err);
+    log("received error from firebase", err);
     throw createUserError(generalServerErrorMessage);
   });
 }
@@ -1592,10 +1592,10 @@ function sendAdminEmail(values, env) {
       }
     }, function optionalCallback(err, httpResponse, body) {
       if (err) {
-        console.log("Error received from mailgun", err);
+        log("Error received from mailgun", err);
         reject(err);
       } else {
-        console.log('Email sent successfully');
+        log('Email sent successfully');
         resolve();
       }
     });
@@ -1643,7 +1643,7 @@ function fetchPromotionsStatus(firebase, eventid, userid) {
 }
 
 function updatePromotionsStatus(registration, promotions, eventRegRef) {
-  console.log("updating registration with promotions status in firebase");
+  log("updating registration with promotions status in firebase");
 
   //if not yet registered
   if (!isRegistered(registration)) {
@@ -1725,7 +1725,7 @@ function calculateBambamStatus(eventInfo, registrations, users, userid) {
 }
 
 function calculateRoomUpgrade(eventInfo, registrations, users, userid) {
-  console.log("calculateRoomUpgrade", eventInfo, registrations);
+  log("calculateRoomUpgrade", eventInfo, registrations);
   if (!get(eventInfo, 'roomUpgrade.enabled')) {
     return {};
   }
@@ -1757,7 +1757,7 @@ function isRegistered(reg) {
 }
 
 function registerInMailchimp(firebase, uid, eventInfo, env) {
-  console.log("adding new registration to mailchimp");
+  log("adding new registration to mailchimp");
   const db = firebase.database();
   const userRef = db.ref('users').child(uid);
   let memberHash;
@@ -1783,14 +1783,14 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
           pass: env.mailchimp_api_key
         }
       }, function optionalCallback(err, httpResponse, body) {
-        console.log("mailchimp update", {err, httpResponse, body});
+        log("mailchimp update", {err, httpResponse, body});
         if ((err && httpResponse.statusCode == 404) ||
             (!err && get(body, "status", 0) == 404)) {
           resolve({status: 'notfound', user});
         } else if (err) {
-          console.log("Error received from mailchimp update member call", err);
+          log("Error received from mailchimp update member call", err);
         } else {
-          console.log('Mailchimp update member successful');
+          log('Mailchimp update member successful');
         }
         resolve();
       });
@@ -1825,11 +1825,11 @@ function registerInMailchimp(firebase, uid, eventInfo, env) {
             pass: env.mailchimp_api_key
           }
         }, function optionalCallback(err, httpResponse, body) {
-          console.log("mailchimp create", {err, httpResponse, body});
+          log("mailchimp create", {err, httpResponse, body});
           if (err) {
-            console.log("Error received from mailchimp create member call", err);
+            log("Error received from mailchimp create member call", err);
           } else {
-            console.log('Mailchimp create member successful');
+            log('Mailchimp create member successful');
           }
           resolve();
         });
@@ -1864,14 +1864,14 @@ function unregisterInMailchimp(firebase, uid, eventInfo, env) {
           pass: env.mailchimp_api_key
         }
       }, function optionalCallback(err, httpResponse, body) {
-        console.log("mailchimp update", {err, httpResponse, body});
+        log("mailchimp update", {err, httpResponse, body});
         if ((err && httpResponse.statusCode == 404) ||
             (!err && get(body, "status", 0) == 404)) {
           resolve({status: 'notfound', user});
         } else if (err) {
-          console.log("Error received from mailchimp update member call", err);
+          log("Error received from mailchimp update member call", err);
         } else {
-          console.log('Mailchimp update member successful');
+          log('Mailchimp update member successful');
         }
         resolve();
       });
@@ -1911,5 +1911,13 @@ function validateDiscountCode(code, eventInfo, user, codes) {
       valid: true,
       name: matchedCode.name
     };
+  }
+}
+
+function log() {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log("[TESTING]", ...arguments);
+  } else {
+    console.log(...arguments);
   }
 }
