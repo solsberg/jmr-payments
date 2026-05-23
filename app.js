@@ -1497,7 +1497,7 @@ function calculateBalance(eventInfo, registration, user, promotions) {
     totalCharges += eventInfo.priceList.singleRoom[order.roomChoice];
   }
   if (has(eventInfo, 'priceList.securityFee')) {
-    totalCharges += event.priceList.securityFee;
+    totalCharges += eventInfo.priceList.securityFee;
   }
   if (order.refrigerator) {
     totalCharges += eventInfo.priceList.refrigerator;
