@@ -611,6 +611,7 @@ api.post("stripe_payments_webhook", (request) => {
   const db = firebase.database();
 
   const payload = request.rawBody;
+  const sig = request.normalizedHeaders['stripe-signature'];
 
   let event = stripe.webhooks.constructEvent(payload, sig, request.env.stripe_payments_webhook_secret);
 
